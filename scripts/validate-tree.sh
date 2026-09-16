@@ -69,6 +69,35 @@ check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/hw/a
 check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/lib64/hw'
 check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/system/lib64/hw'
 
+# The tested F711B vendor does not publish sys.listeners.registered after the
+# stock qseecomd launch. Metadata FBE blocks on splash if Keymaster remains gated
+# behind that property, so all three stock crypto services must start directly
+# once prepdecrypt has published crypto.ready and hwservicemanager is ready.
+crypto_ready_block="$(awk '
+  /^on property:crypto.ready=1 && property:hwservicemanager.ready=true/ { in_block=1; next }
+  in_block && /^on / { exit }
+  in_block { print }
+' recovery/root/init.recovery.qcom.rc)"
+grep -Fq 'start b2q-qseecomd' <<<"$crypto_ready_block" || fail 'crypto.ready block must start b2q-qseecomd'
+grep -Fq 'start b2q-keymaster' <<<"$crypto_ready_block" || fail 'crypto.ready block must start b2q-keymaster'
+grep -Fq 'start b2q-gatekeeper' <<<"$crypto_ready_block" || fail 'crypto.ready block must start b2q-gatekeeper'
+
+# qseecomd and Keymaster are long-running services. They must be restartable if
+# the first launch races secure-world initialization; a oneshot service would
+# remain stopped forever, matching the observed splash hang.
+qsee_block="$(awk '
+  /^service b2q-qseecomd / { in_block=1; next }
+  in_block && /^(service |on )/ { exit }
+  in_block { print }
+' recovery/root/init.recovery.qcom.rc)"
+keymaster_block="$(awk '
+  /^service b2q-keymaster / { in_block=1; next }
+  in_block && /^(service |on )/ { exit }
+  in_block { print }
+' recovery/root/init.recovery.qcom.rc)"
+if grep -Fq 'oneshot' <<<"$qsee_block"; then fail 'b2q-qseecomd must be restartable'; fi
+if grep -Fq 'oneshot' <<<"$keymaster_block"; then fail 'b2q-keymaster must be restartable'; fi
+
 # TeamWin unmounts /vendor after probing the Keymaster manifest. The b2q crypto
 # launcher therefore has to remount the logical vendor partition before it can
 # exec Samsung/Qualcomm HAL binaries. Current firmware is EROFS; ext4 is kept
