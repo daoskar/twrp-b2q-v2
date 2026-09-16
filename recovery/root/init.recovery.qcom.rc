@@ -2,19 +2,73 @@
 #
 # Recovery init additions for Samsung b2q.
 
+# Keep TeamWin's Qualcomm prepdecrypt/keyring flow.  The generic service paths
+# inside qcom_decrypt point at /system/bin, while Samsung b2q ships the actual
+# qseecomd/keymaster/gatekeeper implementations on /vendor.  The b2q-specific
+# services below start those stock vendor binaries without redistributing them.
 import /init.recovery.qcom_decrypt.rc
 
 on init
-    # Keep Qualcomm decrypt helper verbose while b2q-v2 decryption is being validated.
+    # Keep Qualcomm decrypt helper verbose while b2q-v2 decryption is validated.
     setprop prepdecrypt.loglevel 2
 
 on fs
     wait /dev/block/platform/soc/${ro.boot.bootdevice}
     symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
 
-    # Mount firmware
+    # Mount firmware used by Qualcomm secure services.
     mkdir /vendor/firmware_mnt
     mount vfat /dev/block/bootdevice/by-name/apnhlos /vendor/firmware_mnt ro
+
+# TeamWin prepdecrypt sets crypto.ready after preparing vendor/system props.
+on property:crypto.ready=1 && property:hwservicemanager.ready=true
+    start b2q-qseecomd
+
+# The old b2q log reports Keymaster_Ver as 4.x.  Cover both exact and generic
+# values because different vendor releases expose either one.
+on property:sys.listeners.registered=true && property:keymaster_ver=4.0
+    start b2q-keymaster
+on property:sys.listeners.registered=true && property:keymaster_ver=4.x
+    start b2q-keymaster
+on property:vendor.sys.listeners.registered=true && property:keymaster_ver=4.0
+    start b2q-keymaster
+on property:vendor.sys.listeners.registered=true && property:keymaster_ver=4.x
+    start b2q-keymaster
+
+# FBE credential verification requires gatekeeper.  Samsung b2q exposes a
+# gatekeeper 1.0 vendor service; start it once listeners are ready.
+on property:sys.listeners.registered=true
+    start b2q-gatekeeper
+on property:vendor.sys.listeners.registered=true
+    start b2q-gatekeeper
+
+on property:twrp.all.users.decrypted=true
+    stop b2q-gatekeeper
+    stop b2q-keymaster
+    stop b2q-qseecomd
+
+service b2q-qseecomd /system/bin/sh /system/bin/b2q-decrypt-service.sh qseecomd
+    class core
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
+service b2q-keymaster /system/bin/sh /system/bin/b2q-decrypt-service.sh keymaster
+    class core
+    user root
+    group root drmrpc
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
+service b2q-gatekeeper /system/bin/sh /system/bin/b2q-decrypt-service.sh gatekeeper
+    class core
+    user root
+    group root
+    disabled
+    seclabel u:r:recovery:s0
 
 service twrp-otg-watch /system/bin/sh /system/bin/twrp-otg-watch.sh
     class core
