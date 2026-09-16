@@ -1,11 +1,11 @@
 #!/system/bin/sh
 # Launch the crypto HAL/service binaries from the phone's mounted stock vendor.
 # We intentionally do not redistribute Samsung/Qualcomm proprietary blobs in
-# this device tree.  Different b2q vendor revisions may use the generic or
-# -qti service filename, so probe a small known-safe candidate list.
+# this device tree. Different b2q vendor revisions may use the generic or -qti
+# service filename, so probe a small known-safe candidate list.
 
 name="$1"
-export LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
+export LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib64/hw:/vendor/lib:/vendor/lib/hw:/system/lib64:/system/lib64/hw:/system/lib:/system/lib/hw:/sbin
 
 log_msg() {
     echo "b2q-decrypt: $*" > /dev/kmsg 2>/dev/null || true
