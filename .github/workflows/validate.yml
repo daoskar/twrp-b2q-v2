@@ -1,0 +1,25 @@
+name: Validate b2q recovery tree
+
+on:
+  push:
+    branches: [ main, android-12.1, fbe-fix ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare locked upstream files
+        run: bash scripts/prepare-tree.sh
+
+      - name: Validate FBE, OTG and recovery tree
+        run: bash scripts/validate-tree.sh
