@@ -29,7 +29,8 @@ for f in \
   recovery/root/init.recovery.usb.rc \
   recovery/root/system/etc/recovery.fstab \
   recovery/root/system/etc/twrp.flags \
-  recovery/root/system/bin/twrp-otg-watch.sh; do
+  recovery/root/system/bin/twrp-otg-watch.sh \
+  recovery/root/system/bin/b2q-decrypt-service.sh; do
   [[ -f "$f" ]] || fail "missing required source file: $f"
 done
 
@@ -46,6 +47,18 @@ check_contains recovery/root/init.recovery.qcom.rc 'import /init.recovery.qcom_d
 check_contains recovery/root/system/etc/recovery.fstab 'fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized'
 check_contains recovery/root/system/etc/recovery.fstab 'metadata_encryption=aes-256-xts'
 check_contains recovery/root/system/etc/recovery.fstab 'keydirectory=/metadata/vold/metadata_encryption'
+
+# b2q stock-vendor crypto services.  The old recovery had no qsee/keymaster/
+# gatekeeper binaries in its ramdisk, so the device tree must explicitly launch
+# the services that already exist on the mounted F711B vendor partition.
+check_contains recovery/root/init.recovery.qcom.rc 'service b2q-qseecomd /system/bin/sh /system/bin/b2q-decrypt-service.sh qseecomd'
+check_contains recovery/root/init.recovery.qcom.rc 'service b2q-keymaster /system/bin/sh /system/bin/b2q-decrypt-service.sh keymaster'
+check_contains recovery/root/init.recovery.qcom.rc 'service b2q-gatekeeper /system/bin/sh /system/bin/b2q-decrypt-service.sh gatekeeper'
+check_contains recovery/root/init.recovery.qcom.rc 'property:keymaster_ver=4.x'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/qseecomd'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/hw/android.hardware.keymaster@4.0-service'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/hw/android.hardware.gatekeeper@1.0-service'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh 'LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin'
 
 # USB OTG must not depend on the old fixed sdf node.
 check_not_contains recovery/root/system/etc/twrp.flags '/dev/block/sdf1'
@@ -70,6 +83,7 @@ check_blob recovery/root/vendor/etc/vintf/manifest.xml 617c89fc8a7cd8aa292c77a0d
 # Syntax/data sanity.
 bash -n scripts/prepare-tree.sh scripts/fetch-prebuilts.sh scripts/validate-tree.sh
 sh -n recovery/root/system/bin/twrp-otg-watch.sh
+sh -n recovery/root/system/bin/b2q-decrypt-service.sh
 python3 - <<'PY'
 import json
 import xml.etree.ElementTree as ET
