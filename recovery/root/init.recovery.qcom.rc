@@ -1,0 +1,21 @@
+# Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
+#
+# Recovery init additions for Samsung b2q.
+
+on fs
+    wait /dev/block/platform/soc/${ro.boot.bootdevice}
+    symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
+
+    # Mount firmware
+    mkdir /vendor/firmware_mnt
+    mount vfat /dev/block/bootdevice/by-name/apnhlos /vendor/firmware_mnt ro
+
+service twrp-otg-watch /system/bin/sh /system/bin/twrp-otg-watch.sh
+    class core
+    user root
+    group root
+    disabled
+
+on boot
+    start health-hal-2-1
+    start twrp-otg-watch
