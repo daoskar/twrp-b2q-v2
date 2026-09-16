@@ -58,7 +58,7 @@ check_contains recovery/root/system/etc/recovery.fstab 'keydirectory=/metadata/v
 
 # b2q stock-vendor crypto services. The old recovery had no qsee/keymaster/
 # gatekeeper binaries in its ramdisk, so the device tree explicitly launches
-# the services already present on the mounted F711B vendor partition.
+# the services already present on the F711B vendor partition.
 check_contains recovery/root/init.recovery.qcom.rc 'service b2q-qseecomd /system/bin/sh /system/bin/b2q-decrypt-service.sh qseecomd'
 check_contains recovery/root/init.recovery.qcom.rc 'service b2q-keymaster /system/bin/sh /system/bin/b2q-decrypt-service.sh keymaster'
 check_contains recovery/root/init.recovery.qcom.rc 'service b2q-gatekeeper /system/bin/sh /system/bin/b2q-decrypt-service.sh gatekeeper'
@@ -68,6 +68,16 @@ check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/hw/a
 check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/hw/android.hardware.gatekeeper@1.0-service'
 check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/lib64/hw'
 check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/system/lib64/hw'
+
+# TeamWin unmounts /vendor after probing the Keymaster manifest. The b2q crypto
+# launcher therefore has to remount the logical vendor partition before it can
+# exec Samsung/Qualcomm HAL binaries. Current firmware is EROFS; ext4 is kept
+# as a fallback for older vendor images.
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh 'ensure_vendor_mounted'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/dev/block/bootdevice/by-name/vendor'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh 'mount -t erofs -o ro'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh 'mount -t ext4 -o ro'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh 'b2q.decrypt.vendor_mount_failed'
 
 # USB OTG must not depend on the old fixed sdf node.
 check_not_contains recovery/root/system/etc/twrp.flags '/dev/block/sdf1'
