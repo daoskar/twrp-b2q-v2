@@ -76,7 +76,9 @@ jobs:
       - name: Build recovery.img
         shell: bash
         run: |
-          set -euo pipefail
+          # Android's envsetup.sh intentionally reads unset shell variables such
+          # as TOP/ZSH_VERSION, so nounset (-u) must not be enabled here.
+          set -eo pipefail
           cd "$GITHUB_WORKSPACE/twrp"
           export ALLOW_MISSING_DEPENDENCIES=true
           export USE_CCACHE=1
