@@ -1,36 +1,75 @@
-# twrp-b2q-v2
+# TWRP b2q v2
 
-Experimental Samsung Galaxy Z Flip3 **SM-F711B / b2q** TWRP device tree based on AlexFurina/twrp_device_samsung_b2q (`android-12.1`).
+Experimental TWRP device tree for Samsung Galaxy Z Flip3 **SM-F711B / b2q**, based on AlexFurina's Android 12.1 tree and updated around failures reproduced from a real b2q recovery log.
 
-## Main changes
+## What v2 changes
 
-- enable TWRP crypto + FBE + FBE metadata decryption
-- enable Qualcomm FBE decryption helpers
-- add FBEv2 `metadata_encryption` mapping for `/data`
-- enable new minadbd for sideload testing
-- replace fixed `/dev/block/sdf1` USB-OTG path with dynamic removable-disk detection
-- keep `persist` read-only in TWRP
-
-## Prebuilts
-
-The GitHub connector cannot copy binary blobs between repositories directly, so fetch the exact upstream kernel/DTB/DTBO files before building:
-
-```bash
-bash scripts/fetch-prebuilts.sh
-```
-
-The script verifies each download using its upstream Git blob SHA before accepting it.
-
-## Build target
-
-Place this tree at:
-
-```text
-device/samsung/b2q
-```
-
-Then use the normal TWRP 12.1 environment and build `twrp_b2q-eng` / `recoveryimage`.
+- enables TWRP crypto, FBE and FBE metadata decryption
+- enables TeamWin Qualcomm `qcom_decrypt` / `qcom_decrypt_fbe`
+- adds the FBEv2 `metadata_encryption` mapping for `/data`
+- launches b2q's stock `qseecomd`, Keymaster 4.0 and Gatekeeper 1.0 directly from the mounted `/vendor` partition, with generic / `-qti` filename fallback
+- enables the new minadbd path for sideload testing
+- replaces the old fixed `/dev/block/sdf1` USB-OTG path with dynamic removable-disk detection
+- keeps `persist` read-only in TWRP
+- validates all externally fetched upstream files by exact Git blob SHA
 
 ## Status
 
-This branch is experimental and must be tested on-device. In particular, verify `/data` decryption, ADB sideload and USB-OTG before treating it as a release recovery.
+The tree validation workflow is passing. A full `recovery.img` build workflow is included as `.github/workflows/build-recovery.yml`.
+
+**On-device decryption is not declared fixed until it is tested on an SM-F711B with encrypted `/data` and a real PIN/password. Do not Format Data just to test this recovery.**
+
+## Prepare the tree
+
+Binary kernel/DT files and the large unchanged recovery support files are fetched from the known upstream b2q tree instead of being duplicated in this repository:
+
+```bash
+bash scripts/prepare-tree.sh
+bash scripts/validate-tree.sh
+```
+
+The preparation script verifies every downloaded file using its upstream Git blob SHA.
+
+## Local build
+
+Place this repository at `device/samsung/b2q` in a TWRP 12.1 source tree, then:
+
+```bash
+bash device/samsung/b2q/scripts/prepare-tree.sh
+export ALLOW_MISSING_DEPENDENCIES=true
+source build/envsetup.sh
+lunch twrp_b2q-eng
+mka recoveryimage
+```
+
+The expected output is:
+
+```text
+out/target/product/b2q/recovery.img
+```
+
+## First test
+
+Test in this order:
+
+1. boot recovery and check whether Internal Storage shows the correct size;
+2. enter the existing Android PIN/password if TWRP prompts for it;
+3. verify `/data/media` is readable without formatting `/data`;
+4. test a USB-OTG drive;
+5. test ADB sideload with a harmless/test ZIP before using it for a ROM update.
+
+If any of those fail, connect ADB while still in recovery and run from the repository checkout:
+
+```bash
+bash scripts/collect-device-debug.sh
+```
+
+It creates a `b2q-twrp-debug-*.tar.gz` containing recovery log, crypto properties/processes, vendor service presence, mounts, block devices, OTG state and dmesg.
+
+## Upstream / references
+
+Base recovery tree: `AlexFurina/twrp_device_samsung_b2q` (`android-12.1`).
+
+Qualcomm decryption flow: `TeamWin/android_device_qcom_twrp-common` (`android-12.1`).
+
+The stock b2q service filenames were cross-checked against a public SM-F711B proprietary file list based on Samsung firmware (`opensourcefreak/android_device_samsung_b2q`).
