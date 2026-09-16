@@ -22,6 +22,10 @@ check_blob() {
   got="$(git hash-object "$file")"
   [[ "$got" == "$expected" ]] || fail "$file blob mismatch: $got != $expected"
 }
+check_exec() {
+  local file="$1"
+  [[ -x "$file" ]] || fail "$file must be executable"
+}
 
 for f in \
   BoardConfig.mk device.mk twrp_b2q.mk \
@@ -29,6 +33,7 @@ for f in \
   recovery/root/init.recovery.usb.rc \
   recovery/root/system/etc/recovery.fstab \
   recovery/root/system/etc/twrp.flags \
+  recovery/root/system/bin/postrecoveryboot.sh \
   recovery/root/system/bin/twrp-otg-watch.sh \
   recovery/root/system/bin/b2q-decrypt-service.sh; do
   [[ -f "$f" ]] || fail "missing required source file: $f"
@@ -44,13 +49,16 @@ check_contains BoardConfig.mk 'TW_USE_NEW_MINADBD := true'
 check_contains device.mk 'qcom_decrypt'
 check_contains device.mk 'qcom_decrypt_fbe'
 check_contains recovery/root/init.recovery.qcom.rc 'import /init.recovery.qcom_decrypt.rc'
+check_contains recovery/root/init.recovery.qcom.rc 'setprop prepdecrypt.setpatch true'
+check_contains recovery/root/init.recovery.qcom.rc 'setprop prepdecrypt.loglevel 2'
+check_contains recovery/root/init.recovery.qcom.rc 'export ANDROID_ROOT /system_root'
 check_contains recovery/root/system/etc/recovery.fstab 'fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized'
 check_contains recovery/root/system/etc/recovery.fstab 'metadata_encryption=aes-256-xts'
 check_contains recovery/root/system/etc/recovery.fstab 'keydirectory=/metadata/vold/metadata_encryption'
 
-# b2q stock-vendor crypto services.  The old recovery had no qsee/keymaster/
-# gatekeeper binaries in its ramdisk, so the device tree must explicitly launch
-# the services that already exist on the mounted F711B vendor partition.
+# b2q stock-vendor crypto services. The old recovery had no qsee/keymaster/
+# gatekeeper binaries in its ramdisk, so the device tree explicitly launches
+# the services already present on the mounted F711B vendor partition.
 check_contains recovery/root/init.recovery.qcom.rc 'service b2q-qseecomd /system/bin/sh /system/bin/b2q-decrypt-service.sh qseecomd'
 check_contains recovery/root/init.recovery.qcom.rc 'service b2q-keymaster /system/bin/sh /system/bin/b2q-decrypt-service.sh keymaster'
 check_contains recovery/root/init.recovery.qcom.rc 'service b2q-gatekeeper /system/bin/sh /system/bin/b2q-decrypt-service.sh gatekeeper'
@@ -58,7 +66,8 @@ check_contains recovery/root/init.recovery.qcom.rc 'property:keymaster_ver=4.x'
 check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/qseecomd'
 check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/hw/android.hardware.keymaster@4.0-service'
 check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/bin/hw/android.hardware.gatekeeper@1.0-service'
-check_contains recovery/root/system/bin/b2q-decrypt-service.sh 'LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/vendor/lib64/hw'
+check_contains recovery/root/system/bin/b2q-decrypt-service.sh '/system/lib64/hw'
 
 # USB OTG must not depend on the old fixed sdf node.
 check_not_contains recovery/root/system/etc/twrp.flags '/dev/block/sdf1'
@@ -71,6 +80,15 @@ check_contains recovery/root/system/bin/twrp-otg-watch.sh '/removable'
 # Ensure we did not regress the sideload path back to the legacy minadbd.
 check_contains recovery/root/init.recovery.usb.rc 'sys.usb.config=sideload'
 
+# Files that are executed directly by recovery/build helpers must keep +x.
+check_exec recovery/root/system/bin/postrecoveryboot.sh
+check_exec recovery/root/system/bin/twrp-otg-watch.sh
+check_exec recovery/root/system/bin/b2q-decrypt-service.sh
+check_exec scripts/prepare-tree.sh
+check_exec scripts/fetch-prebuilts.sh
+check_exec scripts/validate-tree.sh
+check_exec scripts/collect-device-debug.sh
+
 # Locked upstream artifacts/support files prepared by prepare-tree.sh.
 check_blob prebuilt/dtb 18d1fbd8ed9443abd883b7b5d132a3c248918f0c
 check_blob prebuilt/recoverydtbo 57049e2905cb4e2a5dd94f412ed51121c4b39bdc
@@ -81,7 +99,7 @@ check_blob recovery/root/vendor/etc/task_profiles.json 5989bf53a3d766bdcbd8aea62
 check_blob recovery/root/vendor/etc/vintf/manifest.xml 617c89fc8a7cd8aa292c77a0d0ea09ca1e29324a
 
 # Syntax/data sanity.
-bash -n scripts/prepare-tree.sh scripts/fetch-prebuilts.sh scripts/validate-tree.sh
+bash -n scripts/prepare-tree.sh scripts/fetch-prebuilts.sh scripts/validate-tree.sh scripts/collect-device-debug.sh
 sh -n recovery/root/system/bin/twrp-otg-watch.sh
 sh -n recovery/root/system/bin/b2q-decrypt-service.sh
 python3 - <<'PY'
