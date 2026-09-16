@@ -10,7 +10,7 @@ import /init.recovery.qcom_decrypt.rc
 
 on init
     # b2q has a dedicated recovery partition, so qcom_decrypt would otherwise
-    # keep TWRP's Android/SPL values.  Force it to read the installed logical
+    # keep TWRP's Android/SPL values. Force it to read the installed logical
     # system/vendor props before Keymaster starts.
     setprop prepdecrypt.setpatch true
     setprop prepdecrypt.loglevel 2
@@ -27,11 +27,18 @@ on fs
     mount vfat /dev/block/bootdevice/by-name/apnhlos /vendor/firmware_mnt ro
 
 # TeamWin prepdecrypt sets crypto.ready after preparing vendor/system props.
+# On the tested F711B vendor qseecomd starts, but neither sys.listeners.registered
+# nor vendor.sys.listeners.registered is published. Waiting for those properties
+# leaves TWRP stuck on the splash while metadata FBE waits for Keymaster.
+# Start the stock crypto HALs together once prepdecrypt and hwservicemanager are
+# ready. QSEE/Keymaster are restartable so a transient early failure is retried.
 on property:crypto.ready=1 && property:hwservicemanager.ready=true
     start b2q-qseecomd
+    start b2q-keymaster
+    start b2q-gatekeeper
 
-# The old b2q log reports Keymaster_Ver as 4.x.  Cover both exact and generic
-# values because different vendor releases expose either one.
+# Keep the standard Qualcomm listener triggers as harmless retry paths for vendor
+# revisions that do publish these properties.
 on property:sys.listeners.registered=true && property:keymaster_ver=4.0
     start b2q-keymaster
 on property:sys.listeners.registered=true && property:keymaster_ver=4.x
@@ -40,9 +47,6 @@ on property:vendor.sys.listeners.registered=true && property:keymaster_ver=4.0
     start b2q-keymaster
 on property:vendor.sys.listeners.registered=true && property:keymaster_ver=4.x
     start b2q-keymaster
-
-# FBE credential verification requires gatekeeper.  Samsung b2q exposes a
-# gatekeeper 1.0 vendor service; start it once listeners are ready.
 on property:sys.listeners.registered=true
     start b2q-gatekeeper
 on property:vendor.sys.listeners.registered=true
@@ -58,7 +62,6 @@ service b2q-qseecomd /system/bin/sh /system/bin/b2q-decrypt-service.sh qseecomd
     user root
     group root
     disabled
-    oneshot
     seclabel u:r:recovery:s0
 
 service b2q-keymaster /system/bin/sh /system/bin/b2q-decrypt-service.sh keymaster
@@ -66,7 +69,6 @@ service b2q-keymaster /system/bin/sh /system/bin/b2q-decrypt-service.sh keymaste
     user root
     group root drmrpc
     disabled
-    oneshot
     seclabel u:r:recovery:s0
 
 service b2q-gatekeeper /system/bin/sh /system/bin/b2q-decrypt-service.sh gatekeeper
