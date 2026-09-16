@@ -9,12 +9,18 @@
 import /init.recovery.qcom_decrypt.rc
 
 on init
-    # Keep Qualcomm decrypt helper verbose while b2q-v2 decryption is validated.
+    # b2q has a dedicated recovery partition, so qcom_decrypt would otherwise
+    # keep TWRP's Android/SPL values.  Force it to read the installed logical
+    # system/vendor props before Keymaster starts.
+    setprop prepdecrypt.setpatch true
     setprop prepdecrypt.loglevel 2
 
 on fs
     wait /dev/block/platform/soc/${ro.boot.bootdevice}
     symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
+
+    # TWRP maps the dynamic system partition at /system_root on b2q.
+    export ANDROID_ROOT /system_root
 
     # Mount firmware used by Qualcomm secure services.
     mkdir /vendor/firmware_mnt
