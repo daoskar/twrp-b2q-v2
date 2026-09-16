@@ -2,6 +2,12 @@
 #
 # Recovery init additions for Samsung b2q.
 
+import /init.recovery.qcom_decrypt.rc
+
+on init
+    # Keep Qualcomm decrypt helper verbose while b2q-v2 decryption is being validated.
+    setprop prepdecrypt.loglevel 2
+
 on fs
     wait /dev/block/platform/soc/${ro.boot.bootdevice}
     symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
