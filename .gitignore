@@ -1,0 +1,11 @@
+# Downloaded by scripts/prepare-tree.sh
+prebuilt/
+recovery/root/system/etc/task_profiles.json
+recovery/root/system/etc/vintf/manifest.xml
+recovery/root/vendor/etc/task_profiles.json
+recovery/root/vendor/etc/vintf/manifest.xml
+
+# Android build output / editor noise
+out/
+*.swp
+*.tmp
