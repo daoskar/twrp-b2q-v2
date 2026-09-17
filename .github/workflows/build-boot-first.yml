@@ -1,8 +1,8 @@
-name: Build TWRP b2q boot-first diagnostic
+name: Build TWRP b2q no-crypto diagnostic
 
 on:
   push:
-    branches: [ boot-first-test3 ]
+    branches: [ test4-no-crypto ]
     paths:
       - 'BoardConfig.mk'
       - 'device.mk'
@@ -54,26 +54,31 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout boot-first device tree
+      - name: Checkout test4 device tree
         uses: actions/checkout@v4
         with:
-          ref: boot-first-test3
+          ref: test4-no-crypto
           path: twrp/device/samsung/b2q
 
-      - name: Prepare and verify diagnostic mode
+      - name: Prepare and verify no-crypto diagnostic mode
         shell: bash
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/twrp/device/samsung/b2q"
           bash scripts/prepare-tree.sh
-          grep -Fq 'TW_INCLUDE_FBE_METADATA_DECRYPT := false' BoardConfig.mk
-          grep -Fq 'BOARD_USES_QCOM_FBE_DECRYPTION := false' BoardConfig.mk
+          ! grep -Eq '^[[:space:]]*TW_INCLUDE_CRYPTO[[:space:]]*:=' BoardConfig.mk
+          ! grep -Eq '^[[:space:]]*TW_INCLUDE_CRYPTO_FBE[[:space:]]*:=' BoardConfig.mk
+          ! grep -Eq '^[[:space:]]*TW_INCLUDE_FBE_METADATA_DECRYPT[[:space:]]*:=' BoardConfig.mk
+          ! grep -Eq '^[[:space:]]*BOARD_USES_QCOM_FBE_DECRYPTION[[:space:]]*:=' BoardConfig.mk
           ! grep -Fq 'qcom_decrypt_fbe' device.mk
+          ! grep -Fq 'qcom_decrypt \' device.mk
           ! grep -Fq 'import /init.recovery.qcom_decrypt.rc' recovery/root/init.recovery.qcom.rc
-          ! grep -Fq 'start b2q-keymaster' recovery/root/init.recovery.qcom.rc
+          ! grep -Fq 'fileencryption=' recovery/root/system/etc/recovery.fstab
+          ! grep -Fq 'metadata_encryption=' recovery/root/system/etc/recovery.fstab
+          ! grep -Fq 'keydirectory=' recovery/root/system/etc/recovery.fstab
           bash -n scripts/prepare-tree.sh scripts/fetch-prebuilts.sh scripts/collect-device-debug.sh
           sh -n recovery/root/system/bin/twrp-otg-watch.sh
-          echo '[b2q] boot-first diagnostic assertions passed'
+          echo '[b2q] no-crypto diagnostic assertions passed'
 
       - name: Build recovery.img
         shell: bash
@@ -104,7 +109,7 @@ jobs:
       - name: Upload diagnostic artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-boot-first-test3-${{ github.sha }}
+          name: TWRP-b2q-test4-no-crypto-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
