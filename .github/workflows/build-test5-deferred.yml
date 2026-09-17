@@ -76,12 +76,40 @@ jobs:
           grep -Fq 'metadata_encryption=aes-256-xts' recovery/root/system/etc/recovery.fstab
           grep -Fq 'keydirectory=/metadata/vold/metadata_encryption' recovery/root/system/etc/recovery.fstab
 
+          python3 - "$RECOVERY" <<'PY'
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+
+          pm = root / 'partitionmanager.cpp'
+          text = pm.read_text()
+          old = '\t\tDataManager::SetValue(TW_IS_ENCRYPTED, 1);\n\t\tDecrypt_Data();'
+          new = ('\t\tDataManager::SetValue(TW_IS_ENCRYPTED, 1);\n'
+                 '\t\t// b2q: metadata FBE can block startup before the full GUI.\n'
+                 '\t\t// Keep crypto compiled and defer the first decrypt attempt.\n'
+                 '\t\tLOGINFO("b2q: deferring initial Decrypt_Data() until GUI decrypt action\\n");')
+          if text.count(old) != 1:
+              raise SystemExit(f'partitionmanager.cpp expected 1 startup decrypt block, got {text.count(old)}')
+          pm.write_text(text.replace(old, new, 1))
+
+          action = root / 'gui/action.cpp'
+          text = action.read_text()
+          old = '} else {\n\t\tstring Password;'
+          new = ('} else {\n'
+                 '\t\t// b2q: create metadata mapping only after the GUI is available.\n'
+                 '\t\tLOGINFO("b2q: running deferred Decrypt_Data() from GUI decrypt action\\n");\n'
+                 '\t\tPartitionManager.Decrypt_Data();\n\n'
+                 '\t\tstring Password;')
+          if text.count(old) != 1:
+              raise SystemExit(f'gui/action.cpp expected 1 decrypt action block, got {text.count(old)}')
+          action.write_text(text.replace(old, new, 1))
+          PY
+
           cd "$RECOVERY"
-          git apply --check "$DEVICE/patches/twrp-defer-initial-decrypt.patch"
-          git apply "$DEVICE/patches/twrp-defer-initial-decrypt.patch"
           grep -Fq 'b2q: deferring initial Decrypt_Data() until GUI decrypt action' partitionmanager.cpp
           grep -Fq 'b2q: running deferred Decrypt_Data() from GUI decrypt action' gui/action.cpp
-          if grep -A4 -F 'DataManager::SetValue(TW_IS_ENCRYPTED, 1);' partitionmanager.cpp | grep -Fq $'\t\tDecrypt_Data();'; then
+          if grep -A6 -F 'DataManager::SetValue(TW_IS_ENCRYPTED, 1);' partitionmanager.cpp | grep -Fq $'\t\tDecrypt_Data();'; then
             echo 'Automatic startup Decrypt_Data() is still active' >&2
             exit 1
           fi
