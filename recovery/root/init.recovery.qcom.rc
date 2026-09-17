@@ -1,19 +1,10 @@
 # Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
 #
 # Recovery init additions for Samsung b2q.
-
-# Keep TeamWin's Qualcomm prepdecrypt/keyring flow.  The generic service paths
-# inside qcom_decrypt point at /system/bin, while Samsung b2q ships the actual
-# qseecomd/keymaster/gatekeeper implementations on /vendor.  The b2q-specific
-# services below start those stock vendor binaries without redistributing them.
-import /init.recovery.qcom_decrypt.rc
-
-on init
-    # b2q has a dedicated recovery partition, so qcom_decrypt would otherwise
-    # keep TWRP's Android/SPL values. Force it to read the installed logical
-    # system/vendor props before Keymaster starts.
-    setprop prepdecrypt.setpatch true
-    setprop prepdecrypt.loglevel 2
+#
+# Diagnostic boot-first build: intentionally do not import
+# init.recovery.qcom_decrypt.rc and do not start stock crypto HALs at boot.
+# This isolates recovery UI startup from the FBE/QSEE/Keymaster path.
 
 on fs
     wait /dev/block/platform/soc/${ro.boot.bootdevice}
@@ -22,61 +13,10 @@ on fs
     # TWRP maps the dynamic system partition at /system_root on b2q.
     export ANDROID_ROOT /system_root
 
-    # Mount firmware used by Qualcomm secure services.
+    # Keep firmware mounted exactly as in the normal tree. This is harmless for
+    # the UI and preserves the rest of the device bring-up for comparison.
     mkdir /vendor/firmware_mnt
     mount vfat /dev/block/bootdevice/by-name/apnhlos /vendor/firmware_mnt ro
-
-# TeamWin prepdecrypt sets crypto.ready after preparing vendor/system props.
-# On the tested F711B vendor qseecomd starts, but neither sys.listeners.registered
-# nor vendor.sys.listeners.registered is published. Waiting for those properties
-# leaves TWRP stuck on the splash while metadata FBE waits for Keymaster.
-# Start the stock crypto HALs together once prepdecrypt and hwservicemanager are
-# ready. QSEE/Keymaster are restartable so a transient early failure is retried.
-on property:crypto.ready=1 && property:hwservicemanager.ready=true
-    start b2q-qseecomd
-    start b2q-keymaster
-    start b2q-gatekeeper
-
-# Keep the standard Qualcomm listener triggers as harmless retry paths for vendor
-# revisions that do publish these properties.
-on property:sys.listeners.registered=true && property:keymaster_ver=4.0
-    start b2q-keymaster
-on property:sys.listeners.registered=true && property:keymaster_ver=4.x
-    start b2q-keymaster
-on property:vendor.sys.listeners.registered=true && property:keymaster_ver=4.0
-    start b2q-keymaster
-on property:vendor.sys.listeners.registered=true && property:keymaster_ver=4.x
-    start b2q-keymaster
-on property:sys.listeners.registered=true
-    start b2q-gatekeeper
-on property:vendor.sys.listeners.registered=true
-    start b2q-gatekeeper
-
-on property:twrp.all.users.decrypted=true
-    stop b2q-gatekeeper
-    stop b2q-keymaster
-    stop b2q-qseecomd
-
-service b2q-qseecomd /system/bin/sh /system/bin/b2q-decrypt-service.sh qseecomd
-    class core
-    user root
-    group root
-    disabled
-    seclabel u:r:recovery:s0
-
-service b2q-keymaster /system/bin/sh /system/bin/b2q-decrypt-service.sh keymaster
-    class core
-    user root
-    group root drmrpc
-    disabled
-    seclabel u:r:recovery:s0
-
-service b2q-gatekeeper /system/bin/sh /system/bin/b2q-decrypt-service.sh gatekeeper
-    class core
-    user root
-    group root
-    disabled
-    seclabel u:r:recovery:s0
 
 service twrp-otg-watch /system/bin/sh /system/bin/twrp-otg-watch.sh
     class core
