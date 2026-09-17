@@ -50,4 +50,85 @@ fetch_locked recovery/root/system/etc/vintf/manifest.xml 340549343f3cb0920473478
 fetch_locked recovery/root/vendor/etc/task_profiles.json 5989bf53a3d766bdcbd8aea62a45f101d6aca6a4
 fetch_locked recovery/root/vendor/etc/vintf/manifest.xml 617c89fc8a7cd8aa292c77a0d0ea09ca1e29324a
 
+# test6d diagnostic instrumentation. The test6c device run proved that the
+# ActionThread reaches TWPartitionManager::Decrypt_Data(), but the call does
+# not return. Print visible GUI checkpoints around every potentially blocking
+# stage without changing the decrypt algorithm itself.
+RECOVERY="$(cd "$ROOT/../../.." && pwd)/bootable/recovery"
+PM="$RECOVERY/partitionmanager.cpp"
+if [[ -f "$PM" ]]; then
+  python3 - "$PM" <<'PY'
+import sys
+from pathlib import Path
+
+p = Path(sys.argv[1])
+text = p.read_text()
+
+def once(old, new, label):
+    global text
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected exactly 1 anchor, got {count}")
+    text = text.replace(old, new, 1)
+
+once(
+    '\t\tTWPartition* Key_Directory_Partition = Find_Partition_By_Path(Decrypt_Data->Key_Directory);',
+    '\t\tgui_msg("b2q_decrypt_enter=[b2q] DECRYPT_DATA ENTER");\n'
+    '\t\tgui_msg("b2q_keydir_start=[b2q] KEYDIR MOUNT START");\n'
+    '\t\tTWPartition* Key_Directory_Partition = Find_Partition_By_Path(Decrypt_Data->Key_Directory);',
+    'Decrypt_Data entry')
+
+once(
+    '\t\tif (!Decrypt_Data->Key_Directory.empty()) {',
+    '\t\tgui_msg("b2q_keydir_return=[b2q] KEYDIR MOUNT RETURN");\n'
+    '\t\tif (!Decrypt_Data->Key_Directory.empty()) {',
+    'key directory return')
+
+once(
+    '\t\t\tSet_Crypto_Type("file");',
+    '\t\t\tgui_msg("b2q_crypto_type_start=[b2q] CRYPTO TYPE START");\n'
+    '\t\t\tSet_Crypto_Type("file");\n'
+    '\t\t\tgui_msg("b2q_crypto_type_return=[b2q] CRYPTO TYPE RETURN");',
+    'Set_Crypto_Type')
+
+meta_call = ('\t\t\tif (android::vold::fscrypt_mount_metadata_encrypted('
+             'Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, '
+             'Decrypt_Data->Current_File_System, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {')
+once(
+    meta_call,
+    '\t\t\tgui_msg("b2q_metadata_start=[b2q] METADATA START");\n' +
+    meta_call + '\n'
+    '\t\t\t\tgui_msg("b2q_metadata_ok=[b2q] METADATA OK");',
+    'metadata decrypt call')
+
+once(
+    '\t\t\t\tint retry_count = 10;',
+    '\t\t\t\tgui_msg("b2q_data_mount_start=[b2q] DATA MOUNT START");\n'
+    '\t\t\t\tint retry_count = 10;',
+    'data mount start')
+
+once(
+    '\t\t\t\tif (Decrypt_Data->Mount(false)) {\n\t\t\t\t\tif (!Decrypt_Data->Decrypt_FBE_DE()) {',
+    '\t\t\t\tif (Decrypt_Data->Mount(false)) {\n'
+    '\t\t\t\t\tgui_msg("b2q_data_mount_ok=[b2q] DATA MOUNT OK");\n'
+    '\t\t\t\t\tgui_msg("b2q_fbe_de_start=[b2q] FBE DE START");\n'
+    '\t\t\t\t\tif (!Decrypt_Data->Decrypt_FBE_DE()) {',
+    'FBE DE start')
+
+p.write_text(text)
+PY
+
+  grep -Fq 'b2q_decrypt_enter=[b2q] DECRYPT_DATA ENTER' "$PM"
+  grep -Fq 'b2q_keydir_start=[b2q] KEYDIR MOUNT START' "$PM"
+  grep -Fq 'b2q_keydir_return=[b2q] KEYDIR MOUNT RETURN' "$PM"
+  grep -Fq 'b2q_crypto_type_start=[b2q] CRYPTO TYPE START' "$PM"
+  grep -Fq 'b2q_crypto_type_return=[b2q] CRYPTO TYPE RETURN' "$PM"
+  grep -Fq 'b2q_metadata_start=[b2q] METADATA START' "$PM"
+  grep -Fq 'b2q_metadata_ok=[b2q] METADATA OK' "$PM"
+  grep -Fq 'b2q_data_mount_start=[b2q] DATA MOUNT START' "$PM"
+  grep -Fq 'b2q_data_mount_ok=[b2q] DATA MOUNT OK' "$PM"
+  grep -Fq 'b2q_fbe_de_start=[b2q] FBE DE START' "$PM"
+  echo "[b2q] test6d decrypt-stage instrumentation applied"
+fi
+
 echo "[b2q] tree preparation complete"
