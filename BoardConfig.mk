@@ -131,8 +131,10 @@ PLATFORM_SECURITY_PATCH := 2099-12-31
 VENDOR_SECURITY_PATCH := 2099-12-31
 TW_INCLUDE_CRYPTO := true
 TW_INCLUDE_CRYPTO_FBE := true
-TW_INCLUDE_FBE_METADATA_DECRYPT := true
-BOARD_USES_QCOM_FBE_DECRYPTION := true
+# Diagnostic boot-first build: do not enter metadata/QCOM decrypt during startup.
+# This should allow the GUI to come up with /data still encrypted (0 MB).
+TW_INCLUDE_FBE_METADATA_DECRYPT := false
+BOARD_USES_QCOM_FBE_DECRYPTION := false
 BOARD_USES_METADATA_PARTITION := true
 
 # Recovery
