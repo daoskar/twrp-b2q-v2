@@ -22,7 +22,5 @@ PRODUCT_PACKAGES += \
     android.hardware.fastboot@1.0-impl-mock \
     fastbootd
 
-# Qualcomm FBE decryption helpers
-PRODUCT_PACKAGES += \
-    qcom_decrypt \
-    qcom_decrypt_fbe
+# Diagnostic boot-first build intentionally omits qcom_decrypt/qcom_decrypt_fbe.
+# The goal is to prove that recovery can reach the GUI before any FBE work.
