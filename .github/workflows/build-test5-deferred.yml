@@ -113,21 +113,21 @@ jobs:
           anchor = 'int GUIAction::decrypt(std::string arg __unused)\n{'
           prepare = r'''int GUIAction::preparedecrypt(std::string arg __unused)
           {
-          	int op_status = 0;
+          \tint op_status = 0;
 
-          	operation_start("Prepare Data Decryption");
-          	if (simulate) {
-          		simulate_progress_bar();
-          	} else {
-          		LOGINFO("b2q: manual metadata decrypt preparation starting\n");
-          		PartitionManager.Decrypt_Data();
-          		LOGINFO("b2q: manual metadata decrypt preparation returned\n");
-          		PartitionManager.Update_System_Details();
-          		op_status = DataManager::GetIntValue(TW_IS_DECRYPTED) ? 0 : 1;
-          	}
+          \toperation_start("Prepare Data Decryption");
+          \tif (simulate) {
+          \t\tsimulate_progress_bar();
+          \t} else {
+          \t\tLOGINFO("b2q: manual metadata decrypt preparation starting\\n");
+          \t\tPartitionManager.Decrypt_Data();
+          \t\tLOGINFO("b2q: manual metadata decrypt preparation returned\\n");
+          \t\tPartitionManager.Update_System_Details();
+          \t\top_status = DataManager::GetIntValue(TW_IS_DECRYPTED) ? 0 : 1;
+          \t}
 
-          	operation_end(op_status);
-          	return 0;
+          \toperation_end(op_status);
+          \treturn 0;
           }
 
           int GUIAction::decrypt(std::string arg __unused)
@@ -148,12 +148,14 @@ jobs:
           action.write_text(text.replace(old, new, 1))
 
           # 3) Expose the preparation step on Mount without touching /data checkbox.
+          # Anchor the complete Mount storage selector. The tw_back=mount action
+          # makes this occurrence unique even though "Select Storage" appears elsewhere.
           portrait = root / 'gui/theme/common/portrait.xml'
           text = portrait.read_text()
-          anchor = '''\t\t\t<button style="main_button_half_height">\n\t\t\t\t<placement x="%indent%" y="%row21a_y%"/>\n\t\t\t\t<text>{@select_storage_btn=Select Storage}</text>'''
+          anchor = '''\t\t\t<button style="main_button_half_height">\n\t\t\t\t<placement x="%indent%" y="%row21a_y%"/>\n\t\t\t\t<text>{@select_storage_btn=Select Storage}</text>\n\t\t\t\t<actions>\n\t\t\t\t\t<action function="set">tw_back=mount</action>\n\t\t\t\t\t<action function="overlay">select_storage</action>\n\t\t\t\t</actions>\n\t\t\t</button>'''
           button = '''\t\t\t<button style="main_button_half_height_full_width">\n\t\t\t\t<conditions>\n\t\t\t\t\t<condition var1="tw_is_encrypted" var2="1"/>\n\t\t\t\t\t<condition var1="tw_is_decrypted" var2="0"/>\n\t\t\t\t</conditions>\n\t\t\t\t<placement x="%indent%" y="%row19a_y%"/>\n\t\t\t\t<text>Prepare Data Decryption</text>\n\t\t\t\t<action function="preparedecrypt"/>\n\t\t\t</button>\n\n'''
           if text.count(anchor) != 1:
-              raise SystemExit(f'portrait.xml expected 1 Select Storage anchor, got {text.count(anchor)}')
+              raise SystemExit(f'portrait.xml expected exactly 1 Mount storage selector, got {text.count(anchor)}')
           portrait.write_text(text.replace(anchor, button + anchor, 1))
           PY
 
@@ -163,6 +165,8 @@ jobs:
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'int preparedecrypt(std::string arg);' gui/objects.hpp
           grep -Fq 'Prepare Data Decryption' gui/theme/common/portrait.xml
+          grep -Fq '<action function="set">tw_back=mount</action>' gui/theme/common/portrait.xml
+          xmllint --noout gui/theme/common/portrait.xml
           ! grep -Fq '#include <thread>' partitionmanager.cpp
           ! grep -Fq 'std::thread' partitionmanager.cpp
           if grep -A4 -F 'DataManager::SetValue(TW_IS_ENCRYPTED, 1);' partitionmanager.cpp | grep -Fq $'\t\tDecrypt_Data();'; then
