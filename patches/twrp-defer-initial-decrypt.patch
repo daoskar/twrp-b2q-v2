@@ -1,0 +1,31 @@
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -525,9 +525,11 @@ void TWPartitionManager::Setup_Fstab_Partitions(bool Display_Error) {
+ 	#ifdef TW_INCLUDE_CRYPTO
+ 		DataManager::SetValue(TW_IS_ENCRYPTED, 1);
+-		Decrypt_Data();
++		// b2q: metadata FBE can block recovery startup before the full UI is loaded.
++		// Keep crypto compiled, but defer the first metadata/decrypt attempt until
++		// the user enters a credential from the decrypt page.
++		LOGINFO("b2q: deferring initial Decrypt_Data() until GUI decrypt action\n");
+ 	#endif
+ 
+ 		Update_System_Details();
+diff --git a/gui/action.cpp b/gui/action.cpp
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -1519,6 +1519,13 @@ int GUIAction::decrypt(std::string arg __unused)
+ 	if (simulate) {
+ 		simulate_progress_bar();
+ 	} else {
++		// b2q: initial metadata mapping is intentionally deferred so recovery can
++		// reach the full GUI even when vold/Keymaster are not ready during startup.
++		// Run the normal TWRP metadata/FBE preparation now, immediately before
++		// checking the user supplied PIN/password.
++		LOGINFO("b2q: running deferred Decrypt_Data() from GUI decrypt action\n");
++		PartitionManager.Decrypt_Data();
++
+ 		string Password;
+ 		string userID;
+ 		DataManager::GetValue("tw_crypto_password", Password);
