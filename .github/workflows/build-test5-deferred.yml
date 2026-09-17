@@ -1,0 +1,109 @@
+name: Build TWRP b2q deferred-crypto test5
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib git git-lfs \
+            gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 \
+            libxml2-utils lzop openjdk-11-jdk pngcrush rsync schedtool squashfs-tools \
+            xsltproc zip zlib1g-dev python3
+
+      - name: Install repo tool
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Sync TWRP 12.1 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/twrp"
+          cd "$GITHUB_WORKSPACE/twrp"
+          "$HOME/bin/repo" init --depth=1 \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b twrp-12.1
+          "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
+
+      - name: Checkout test5 device tree
+        uses: actions/checkout@v4
+        with:
+          ref: test5-deferred-crypto
+          path: twrp/device/samsung/b2q
+
+      - name: Prepare b2q tree and patch TWRP decrypt flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEVICE="$GITHUB_WORKSPACE/twrp/device/samsung/b2q"
+          RECOVERY="$GITHUB_WORKSPACE/twrp/bootable/recovery"
+          cd "$DEVICE"
+          bash scripts/prepare-tree.sh
+          bash scripts/validate-tree.sh
+          cd "$RECOVERY"
+          git apply --check "$DEVICE/patches/twrp-defer-initial-decrypt.patch"
+          git apply "$DEVICE/patches/twrp-defer-initial-decrypt.patch"
+          grep -Fq 'b2q: deferring initial Decrypt_Data() until GUI decrypt action' partitionmanager.cpp
+          grep -Fq 'b2q: running deferred Decrypt_Data() from GUI decrypt action' gui/action.cpp
+          if grep -A4 -F 'DataManager::SetValue(TW_IS_ENCRYPTED, 1);' partitionmanager.cpp | grep -Fq $'\t\tDecrypt_Data();'; then
+            echo 'Automatic startup Decrypt_Data() is still active' >&2
+            exit 1
+          fi
+          echo '[b2q] deferred-crypto patch applied and verified'
+
+      - name: Build recovery.img
+        shell: bash
+        run: |
+          set -eo pipefail
+          cd "$GITHUB_WORKSPACE/twrp"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+          ccache -M 5G
+          source build/envsetup.sh
+          lunch twrp_b2q-eng
+          mka -j"$(nproc)" recoveryimage
+
+      - name: Verify recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
+          test -s "$OUT/recovery.img"
+          stat "$OUT/recovery.img"
+          sha256sum "$OUT/recovery.img" | tee "$OUT/recovery.img.sha256"
+          if [ "$(stat -c %s "$OUT/recovery.img")" -gt 100663296 ]; then
+            echo 'recovery.img exceeds the 96 MiB recovery partition' >&2
+            exit 1
+          fi
+
+      - name: Upload test5 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-b2q-deferred-crypto-test5-${{ github.sha }}
+          path: |
+            twrp/out/target/product/b2q/recovery.img
+            twrp/out/target/product/b2q/recovery.img.sha256
+          if-no-files-found: error
+          retention-days: 14
