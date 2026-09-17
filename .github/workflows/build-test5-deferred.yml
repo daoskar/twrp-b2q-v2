@@ -1,4 +1,4 @@
-name: Build TWRP b2q async-metadata test6
+name: Build TWRP b2q manual-metadata test6b
 
 on:
   push:
@@ -49,13 +49,13 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6 device tree
+      - name: Checkout test6b device tree
         uses: actions/checkout@v4
         with:
           ref: test6-async-metadata
           path: twrp/device/samsung/b2q
 
-      - name: Prepare stable baseline and patch async metadata decrypt
+      - name: Prepare stable baseline and manual metadata action
         shell: bash
         run: |
           set -euo pipefail
@@ -81,64 +81,95 @@ jobs:
           from pathlib import Path
 
           root = Path(sys.argv[1])
+
+          # 1) Keep startup stable: crypto is compiled, but metadata mapping is not
+          #    allowed to block Setup_Fstab_Partitions().
           pm = root / 'partitionmanager.cpp'
           text = pm.read_text()
-
-          include_anchor = '#include <iomanip>\n'
-          if include_anchor not in text:
-              raise SystemExit('missing include anchor')
-          text = text.replace(include_anchor, include_anchor + '#include <thread>\n', 1)
-
           old = '\t\tDataManager::SetValue(TW_IS_ENCRYPTED, 1);\n\t\tDecrypt_Data();'
           new = ('\t\tDataManager::SetValue(TW_IS_ENCRYPTED, 1);\n'
-                 '\t\tLOGINFO("b2q: startup metadata decrypt deferred to async worker\\n");')
+                 '\t\tLOGINFO("b2q: startup metadata decrypt deferred to manual ActionThread\\n");')
           if text.count(old) != 1:
               raise SystemExit(f'partitionmanager.cpp expected 1 startup decrypt block, got {text.count(old)}')
-          text = text.replace(old, new, 1)
+          pm.write_text(text.replace(old, new, 1))
 
-          anchor = '\t\tsetup_uevent();\n}'
-          async_block = ('\t\tsetup_uevent();\n'
-                         '\n'
-                         '#ifdef TW_INCLUDE_CRYPTO\n'
-                         '\t\t// b2q test6: never block recovery startup on metadata/FBE setup.\n'
-                         '\t\t// Run it after the main setup has returned; if vold blocks, GUI stays alive.\n'
-                         '\t\tstd::thread([this]() {\n'
-                         '\t\t\tsleep(8);\n'
-                         '\t\t\tLOGINFO("b2q: async metadata decrypt worker starting\\n");\n'
-                         '\t\t\tthis->Decrypt_Data();\n'
-                         '\t\t\tLOGINFO("b2q: async metadata decrypt worker returned\\n");\n'
-                         '\t\t\tthis->Update_System_Details();\n'
-                         '\t\t}).detach();\n'
-                         '#endif\n'
-                         '}')
-          if text.count(anchor) != 1:
-              raise SystemExit(f'expected 1 setup_uevent anchor, got {text.count(anchor)}')
-          pm.write_text(text.replace(anchor, async_block, 1))
+          # 2) Add a dedicated threaded GUI action that prepares metadata/FBE only.
+          objects = root / 'gui/objects.hpp'
+          text = objects.read_text()
+          old = '\tint decrypt(std::string arg);\n'
+          new = '\tint preparedecrypt(std::string arg);\n\tint decrypt(std::string arg);\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'objects.hpp expected 1 decrypt declaration, got {text.count(old)}')
+          objects.write_text(text.replace(old, new, 1))
 
           action = root / 'gui/action.cpp'
           text = action.read_text()
+          old = '\t\tADD_ACTION(decrypt);\n'
+          new = '\t\tADD_ACTION(preparedecrypt);\n\t\tADD_ACTION(decrypt);\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'action.cpp expected 1 decrypt registration, got {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          anchor = 'int GUIAction::decrypt(std::string arg __unused)\n{'
+          prepare = r'''int GUIAction::preparedecrypt(std::string arg __unused)
+          {
+          	int op_status = 0;
+
+          	operation_start("Prepare Data Decryption");
+          	if (simulate) {
+          		simulate_progress_bar();
+          	} else {
+          		LOGINFO("b2q: manual metadata decrypt preparation starting\n");
+          		PartitionManager.Decrypt_Data();
+          		LOGINFO("b2q: manual metadata decrypt preparation returned\n");
+          		PartitionManager.Update_System_Details();
+          		op_status = DataManager::GetIntValue(TW_IS_DECRYPTED) ? 0 : 1;
+          	}
+
+          	operation_end(op_status);
+          	return 0;
+          }
+
+          int GUIAction::decrypt(std::string arg __unused)
+          {'''
+          if text.count(anchor) != 1:
+              raise SystemExit(f'action.cpp expected 1 decrypt function anchor, got {text.count(anchor)}')
+          text = text.replace(anchor, prepare, 1)
+
+          # Keep test5 fallback: when the user later submits PIN/password, ensure
+          # metadata mapping exists first. This remains on TWRP's ActionThread.
           old = '} else {\n\t\tstring Password;'
           new = ('} else {\n'
-                 '\t\t// b2q: fallback if the async metadata worker has not completed yet.\n'
                  '\t\tLOGINFO("b2q: GUI decrypt action checking metadata mapping\\n");\n'
                  '\t\tPartitionManager.Decrypt_Data();\n\n'
                  '\t\tstring Password;')
           if text.count(old) != 1:
-              raise SystemExit(f'gui/action.cpp expected 1 decrypt action block, got {text.count(old)}')
+              raise SystemExit(f'action.cpp expected 1 decrypt action block, got {text.count(old)}')
           action.write_text(text.replace(old, new, 1))
+
+          # 3) Expose the preparation step on Mount without touching /data checkbox.
+          portrait = root / 'gui/theme/common/portrait.xml'
+          text = portrait.read_text()
+          anchor = '''\t\t\t<button style="main_button_half_height">\n\t\t\t\t<placement x="%indent%" y="%row21a_y%"/>\n\t\t\t\t<text>{@select_storage_btn=Select Storage}</text>'''
+          button = '''\t\t\t<button style="main_button_half_height_full_width">\n\t\t\t\t<conditions>\n\t\t\t\t\t<condition var1="tw_is_encrypted" var2="1"/>\n\t\t\t\t\t<condition var1="tw_is_decrypted" var2="0"/>\n\t\t\t\t</conditions>\n\t\t\t\t<placement x="%indent%" y="%row19a_y%"/>\n\t\t\t\t<text>Prepare Data Decryption</text>\n\t\t\t\t<action function="preparedecrypt"/>\n\t\t\t</button>\n\n'''
+          if text.count(anchor) != 1:
+              raise SystemExit(f'portrait.xml expected 1 Select Storage anchor, got {text.count(anchor)}')
+          portrait.write_text(text.replace(anchor, button + anchor, 1))
           PY
 
           cd "$RECOVERY"
-          grep -Fq '#include <thread>' partitionmanager.cpp
-          grep -Fq 'b2q: startup metadata decrypt deferred to async worker' partitionmanager.cpp
-          grep -Fq 'b2q: async metadata decrypt worker starting' partitionmanager.cpp
-          grep -Fq 'b2q: async metadata decrypt worker returned' partitionmanager.cpp
-          grep -Fq 'b2q: GUI decrypt action checking metadata mapping' gui/action.cpp
+          grep -Fq 'b2q: startup metadata decrypt deferred to manual ActionThread' partitionmanager.cpp
+          grep -Fq 'ADD_ACTION(preparedecrypt);' gui/action.cpp
+          grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
+          grep -Fq 'int preparedecrypt(std::string arg);' gui/objects.hpp
+          grep -Fq 'Prepare Data Decryption' gui/theme/common/portrait.xml
+          ! grep -Fq '#include <thread>' partitionmanager.cpp
+          ! grep -Fq 'std::thread' partitionmanager.cpp
           if grep -A4 -F 'DataManager::SetValue(TW_IS_ENCRYPTED, 1);' partitionmanager.cpp | grep -Fq $'\t\tDecrypt_Data();'; then
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] async metadata decrypt patch verified'
+          echo '[b2q] manual ActionThread metadata decrypt patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -166,10 +197,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6 artifact
+      - name: Upload test6b artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-async-metadata-test6-${{ github.sha }}
+          name: TWRP-b2q-manual-metadata-test6b-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
