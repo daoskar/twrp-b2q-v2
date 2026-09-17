@@ -111,7 +111,7 @@ jobs:
           text = text.replace(old, new, 1)
 
           anchor = 'int GUIAction::decrypt(std::string arg __unused)\n{'
-          prepare = r'''int GUIAction::preparedecrypt(std::string arg __unused)
+          prepare = '''int GUIAction::preparedecrypt(std::string arg __unused)
           {
           \tint op_status = 0;
 
