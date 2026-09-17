@@ -1,9 +1,9 @@
-name: Build TWRP b2q deferred-crypto test5
+name: Build TWRP b2q async-metadata test6
 
 on:
   push:
     branches:
-      - test5-deferred-crypto
+      - test6-async-metadata
   workflow_dispatch:
 
 permissions:
@@ -49,13 +49,13 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test5 device tree
+      - name: Checkout test6 device tree
         uses: actions/checkout@v4
         with:
-          ref: test5-deferred-crypto
+          ref: test6-async-metadata
           path: twrp/device/samsung/b2q
 
-      - name: Prepare stable baseline and patch deferred decrypt
+      - name: Prepare stable baseline and patch async metadata decrypt
         shell: bash
         run: |
           set -euo pipefail
@@ -81,24 +81,46 @@ jobs:
           from pathlib import Path
 
           root = Path(sys.argv[1])
-
           pm = root / 'partitionmanager.cpp'
           text = pm.read_text()
+
+          include_anchor = '#include <iomanip>\n'
+          if include_anchor not in text:
+              raise SystemExit('missing include anchor')
+          text = text.replace(include_anchor, include_anchor + '#include <thread>\n', 1)
+
           old = '\t\tDataManager::SetValue(TW_IS_ENCRYPTED, 1);\n\t\tDecrypt_Data();'
           new = ('\t\tDataManager::SetValue(TW_IS_ENCRYPTED, 1);\n'
-                 '\t\t// b2q: metadata FBE can block startup before the full GUI.\n'
-                 '\t\t// Keep crypto compiled and defer the first decrypt attempt.\n'
-                 '\t\tLOGINFO("b2q: deferring initial Decrypt_Data() until GUI decrypt action\\n");')
+                 '\t\tLOGINFO("b2q: startup metadata decrypt deferred to async worker\\n");')
           if text.count(old) != 1:
               raise SystemExit(f'partitionmanager.cpp expected 1 startup decrypt block, got {text.count(old)}')
-          pm.write_text(text.replace(old, new, 1))
+          text = text.replace(old, new, 1)
+
+          anchor = '\t\tsetup_uevent();\n}'
+          async_block = ('\t\tsetup_uevent();\n'
+                         '\n'
+                         '#ifdef TW_INCLUDE_CRYPTO\n'
+                         '\t\t// b2q test6: never block recovery startup on metadata/FBE setup.\n'
+                         '\t\t// Run it after the main setup has returned; if vold blocks, GUI stays alive.\n'
+                         '\t\tstd::thread([this]() {\n'
+                         '\t\t\tsleep(8);\n'
+                         '\t\t\tLOGINFO("b2q: async metadata decrypt worker starting\\n");\n'
+                         '\t\t\tthis->Decrypt_Data();\n'
+                         '\t\t\tLOGINFO("b2q: async metadata decrypt worker returned\\n");\n'
+                         '\t\t\tthis->Update_System_Details();\n'
+                         '\t\t}).detach();\n'
+                         '#endif\n'
+                         '}')
+          if text.count(anchor) != 1:
+              raise SystemExit(f'expected 1 setup_uevent anchor, got {text.count(anchor)}')
+          pm.write_text(text.replace(anchor, async_block, 1))
 
           action = root / 'gui/action.cpp'
           text = action.read_text()
           old = '} else {\n\t\tstring Password;'
           new = ('} else {\n'
-                 '\t\t// b2q: create metadata mapping only after the GUI is available.\n'
-                 '\t\tLOGINFO("b2q: running deferred Decrypt_Data() from GUI decrypt action\\n");\n'
+                 '\t\t// b2q: fallback if the async metadata worker has not completed yet.\n'
+                 '\t\tLOGINFO("b2q: GUI decrypt action checking metadata mapping\\n");\n'
                  '\t\tPartitionManager.Decrypt_Data();\n\n'
                  '\t\tstring Password;')
           if text.count(old) != 1:
@@ -107,13 +129,16 @@ jobs:
           PY
 
           cd "$RECOVERY"
-          grep -Fq 'b2q: deferring initial Decrypt_Data() until GUI decrypt action' partitionmanager.cpp
-          grep -Fq 'b2q: running deferred Decrypt_Data() from GUI decrypt action' gui/action.cpp
-          if grep -A6 -F 'DataManager::SetValue(TW_IS_ENCRYPTED, 1);' partitionmanager.cpp | grep -Fq $'\t\tDecrypt_Data();'; then
-            echo 'Automatic startup Decrypt_Data() is still active' >&2
+          grep -Fq '#include <thread>' partitionmanager.cpp
+          grep -Fq 'b2q: startup metadata decrypt deferred to async worker' partitionmanager.cpp
+          grep -Fq 'b2q: async metadata decrypt worker starting' partitionmanager.cpp
+          grep -Fq 'b2q: async metadata decrypt worker returned' partitionmanager.cpp
+          grep -Fq 'b2q: GUI decrypt action checking metadata mapping' gui/action.cpp
+          if grep -A4 -F 'DataManager::SetValue(TW_IS_ENCRYPTED, 1);' partitionmanager.cpp | grep -Fq $'\t\tDecrypt_Data();'; then
+            echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] stable-baseline deferred crypto verified'
+          echo '[b2q] async metadata decrypt patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -141,10 +166,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test5 artifact
+      - name: Upload test6 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-deferred-crypto-test5-${{ github.sha }}
+          name: TWRP-b2q-async-metadata-test6-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
