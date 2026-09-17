@@ -113,17 +113,23 @@ jobs:
           anchor = 'int GUIAction::decrypt(std::string arg __unused)\n{'
           prepare = '''int GUIAction::preparedecrypt(std::string arg __unused)
           {
-          \tint op_status = 0;
+          \tint op_status = 1;
 
           \toperation_start("Prepare Data Decryption");
           \tif (simulate) {
           \t\tsimulate_progress_bar();
+          \t\top_status = 0;
           \t} else {
           \t\tLOGINFO("b2q: manual metadata decrypt preparation starting\\n");
           \t\tPartitionManager.Decrypt_Data();
-          \t\tLOGINFO("b2q: manual metadata decrypt preparation returned\\n");
+          \t\tTWPartition* data = PartitionManager.Find_Partition_By_Path("/data");
+          \t\tif (data && data->Is_Decrypted) {
+          \t\t\tLOGINFO("b2q: metadata mapping is ready, block device: '%s'\\n", data->Decrypted_Block_Device.c_str());
+          \t\t\top_status = 0;
+          \t\t} else {
+          \t\t\tLOGERR("b2q: metadata mapping was not prepared\\n");
+          \t\t}
           \t\tPartitionManager.Update_System_Details();
-          \t\top_status = DataManager::GetIntValue(TW_IS_DECRYPTED) ? 0 : 1;
           \t}
 
           \toperation_end(op_status);
@@ -163,6 +169,7 @@ jobs:
           grep -Fq 'b2q: startup metadata decrypt deferred to manual ActionThread' partitionmanager.cpp
           grep -Fq 'ADD_ACTION(preparedecrypt);' gui/action.cpp
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
+          grep -Fq 'metadata mapping is ready' gui/action.cpp
           grep -Fq 'int preparedecrypt(std::string arg);' gui/objects.hpp
           grep -Fq 'Prepare Data Decryption' gui/theme/common/portrait.xml
           grep -Fq '<action function="set">tw_back=mount</action>' gui/theme/common/portrait.xml
