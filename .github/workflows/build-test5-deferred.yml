@@ -1,6 +1,9 @@
 name: Build TWRP b2q deferred-crypto test5
 
 on:
+  push:
+    branches:
+      - test5-deferred-crypto
   workflow_dispatch:
 
 permissions:
@@ -52,7 +55,7 @@ jobs:
           ref: test5-deferred-crypto
           path: twrp/device/samsung/b2q
 
-      - name: Prepare b2q tree and patch TWRP decrypt flow
+      - name: Prepare stable baseline and patch deferred decrypt
         shell: bash
         run: |
           set -euo pipefail
@@ -60,7 +63,19 @@ jobs:
           RECOVERY="$GITHUB_WORKSPACE/twrp/bootable/recovery"
           cd "$DEVICE"
           bash scripts/prepare-tree.sh
-          bash scripts/validate-tree.sh
+
+          grep -Fq 'TW_INCLUDE_CRYPTO := true' BoardConfig.mk
+          grep -Fq 'TW_INCLUDE_CRYPTO_FBE := true' BoardConfig.mk
+          grep -Fq 'TW_INCLUDE_FBE_METADATA_DECRYPT := true' BoardConfig.mk
+          grep -Fq 'BOARD_USES_QCOM_FBE_DECRYPTION := false' BoardConfig.mk
+          ! grep -Fq 'TW_USE_NEW_MINADBD' BoardConfig.mk
+          ! grep -Fq 'qcom_decrypt' device.mk
+          ! grep -Fq 'import /init.recovery.qcom_decrypt.rc' recovery/root/init.recovery.qcom.rc
+          ! grep -Fq 'twrp-otg-watch' recovery/root/init.recovery.qcom.rc
+          grep -Fq '/dev/block/sdf1' recovery/root/system/etc/twrp.flags
+          grep -Fq 'metadata_encryption=aes-256-xts' recovery/root/system/etc/recovery.fstab
+          grep -Fq 'keydirectory=/metadata/vold/metadata_encryption' recovery/root/system/etc/recovery.fstab
+
           cd "$RECOVERY"
           git apply --check "$DEVICE/patches/twrp-defer-initial-decrypt.patch"
           git apply "$DEVICE/patches/twrp-defer-initial-decrypt.patch"
@@ -70,7 +85,7 @@ jobs:
             echo 'Automatic startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] deferred-crypto patch applied and verified'
+          echo '[b2q] stable-baseline deferred crypto verified'
 
       - name: Build recovery.img
         shell: bash
