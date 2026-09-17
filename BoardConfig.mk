@@ -125,16 +125,13 @@ TARGET_COPY_OUT_PRODUCT := product
 BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE := ext4
 TARGET_COPY_OUT_VENDOR := vendor
 
-# Encryption / FBE
+# Encryption / FBE diagnostic
 PLATFORM_VERSION := 12.1.0
 PLATFORM_SECURITY_PATCH := 2099-12-31
 VENDOR_SECURITY_PATCH := 2099-12-31
-TW_INCLUDE_CRYPTO := true
-TW_INCLUDE_CRYPTO_FBE := true
-# Diagnostic boot-first build: do not enter metadata/QCOM decrypt during startup.
-# This should allow the GUI to come up with /data still encrypted (0 MB).
-TW_INCLUDE_FBE_METADATA_DECRYPT := false
-BOARD_USES_QCOM_FBE_DECRYPTION := false
+# test4 intentionally leaves TW_INCLUDE_CRYPTO, TW_INCLUDE_CRYPTO_FBE,
+# TW_INCLUDE_FBE_METADATA_DECRYPT and BOARD_USES_QCOM_FBE_DECRYPTION undefined.
+# Goal: prove whether the GUI can reach the main menu with no crypto code path.
 BOARD_USES_METADATA_PARTITION := true
 
 # Recovery
