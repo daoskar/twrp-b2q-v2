@@ -1,0 +1,94 @@
+name: Publish verified TWRP b2q test2
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/publish-test2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '35147497882'
+      SOURCE_ARTIFACT: 'TWRP-b2q-v2-28444ac6be9ec1020851b4de390439c7a8b1919b'
+      SOURCE_SHA: '28444ac6be9ec1020851b4de390439c7a8b1919b'
+      RECOVERY_SHA256: '0de07cc2509b247853d3f1ecea4d483fddbd14af49edaf3f85ac1aa157bd69dd'
+      TAG: 'v0.1.0-test2'
+    steps:
+      - name: Download verified build artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$SOURCE_ARTIFACT" \
+            --dir dist
+          test -f dist/recovery.img
+
+      - name: Verify recovery image
+        run: |
+          set -euo pipefail
+          cd dist
+          test "$(stat -c '%s' recovery.img)" = '100663296'
+          echo "$RECOVERY_SHA256  recovery.img" | sha256sum -c -
+
+      - name: Build Odin packages
+        run: |
+          set -euo pipefail
+          cd dist
+          tar --format=ustar -cf TWRP-b2q-v2-28444ac6-Odin.tar recovery.img
+          cp TWRP-b2q-v2-28444ac6-Odin.tar TWRP-b2q-v2-28444ac6-Odin.tar.md5
+          md5sum -t TWRP-b2q-v2-28444ac6-Odin.tar.md5 >> TWRP-b2q-v2-28444ac6-Odin.tar.md5
+          sha256sum recovery.img TWRP-b2q-v2-28444ac6-Odin.tar TWRP-b2q-v2-28444ac6-Odin.tar.md5 > SHA256SUMS.txt
+          tar -tf TWRP-b2q-v2-28444ac6-Odin.tar
+
+      - name: Publish GitHub Release
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          ## TWRP b2q v2 — test2
+
+          Samsung Galaxy Z Flip3 **SM-F711B / b2q**.
+
+          Built from commit `28444ac6be9ec1020851b4de390439c7a8b1919b`.
+
+          This build fixes the test1 startup stall observed on-device after the TeamWin splash. Device logs showed `prepdecrypt` completed with `crypto.ready=1`, but the vendor did not publish `sys.listeners.registered` / `vendor.sys.listeners.registered`, leaving Keymaster and Gatekeeper gated indefinitely.
+
+          Changes in test2:
+          - start stock qseecomd, Keymaster and Gatekeeper together after `crypto.ready=1` and hwservicemanager readiness
+          - keep listener-based triggers only as retry paths
+          - make qseecomd and Keymaster restartable instead of one-shot services
+          - retain Android 16 OS/SPL sync, metadata-FBE wiring, dynamic OTG handling and new minadbd
+
+          Verified before release:
+          - GitHub Actions build #7: success
+          - recovery image size: 100663296 bytes (96 MiB)
+          - SHA-256: `0de07cc2509b247853d3f1ecea4d483fddbd14af49edaf3f85ac1aa157bd69dd`
+          - ramdisk inspected and confirmed to contain the new direct crypto-HAL startup trigger
+
+          Files:
+          - `TWRP-b2q-v2-28444ac6-Odin.tar.md5` — recommended Odin package
+          - `TWRP-b2q-v2-28444ac6-Odin.tar` — plain Odin TAR
+          - `recovery.img` — raw recovery image
+          - `SHA256SUMS.txt` — checksums
+
+          Experimental test build. Do not format `/data` during testing.
+          EOF
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title 'TWRP b2q v2 — test2 (28444ac6)' \
+            --prerelease \
+            --notes-file /tmp/release-notes.md \
+            dist/TWRP-b2q-v2-28444ac6-Odin.tar.md5 \
+            dist/TWRP-b2q-v2-28444ac6-Odin.tar \
+            dist/recovery.img \
+            dist/SHA256SUMS.txt
