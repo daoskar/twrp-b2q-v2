@@ -1,0 +1,184 @@
+name: Build TWRP b2q mount-decrypt test6
+
+on:
+  push:
+    branches:
+      - test6-mount-decrypt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib git git-lfs \
+            gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 \
+            libxml2-utils lzop openjdk-11-jdk pngcrush rsync schedtool squashfs-tools \
+            xsltproc zip zlib1g-dev python3
+
+      - name: Install repo tool
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Sync TWRP 12.1 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/twrp"
+          cd "$GITHUB_WORKSPACE/twrp"
+          "$HOME/bin/repo" init --depth=1 \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b twrp-12.1
+          "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
+
+      - name: Checkout test6 device tree
+        uses: actions/checkout@v4
+        with:
+          ref: test6-mount-decrypt
+          path: twrp/device/samsung/b2q
+
+      - name: Prepare stable baseline and patch mount decrypt flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEVICE="$GITHUB_WORKSPACE/twrp/device/samsung/b2q"
+          RECOVERY="$GITHUB_WORKSPACE/twrp/bootable/recovery"
+          cd "$DEVICE"
+          bash scripts/prepare-tree.sh
+
+          grep -Fq 'TW_INCLUDE_CRYPTO := true' BoardConfig.mk
+          grep -Fq 'TW_INCLUDE_CRYPTO_FBE := true' BoardConfig.mk
+          grep -Fq 'TW_INCLUDE_FBE_METADATA_DECRYPT := true' BoardConfig.mk
+          grep -Fq 'BOARD_USES_QCOM_FBE_DECRYPTION := false' BoardConfig.mk
+          ! grep -Fq 'TW_USE_NEW_MINADBD' BoardConfig.mk
+          ! grep -Fq 'qcom_decrypt' device.mk
+          ! grep -Fq 'import /init.recovery.qcom_decrypt.rc' recovery/root/init.recovery.qcom.rc
+          ! grep -Fq 'twrp-otg-watch' recovery/root/init.recovery.qcom.rc
+          grep -Fq '/dev/block/sdf1' recovery/root/system/etc/twrp.flags
+          grep -Fq 'metadata_encryption=aes-256-xts' recovery/root/system/etc/recovery.fstab
+          grep -Fq 'keydirectory=/metadata/vold/metadata_encryption' recovery/root/system/etc/recovery.fstab
+
+          python3 - "$RECOVERY" <<'PY'
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+
+          pm = root / 'partitionmanager.cpp'
+          text = pm.read_text()
+          old = '\t\tDataManager::SetValue(TW_IS_ENCRYPTED, 1);\n\t\tDecrypt_Data();'
+          new = ('\t\tDataManager::SetValue(TW_IS_ENCRYPTED, 1);\n'
+                 '\t\t// b2q: keep GUI bootable; metadata decrypt is user-triggered.\n'
+                 '\t\tLOGINFO("b2q: deferring initial Decrypt_Data() until user action\\n");')
+          if text.count(old) != 1:
+              raise SystemExit(f'partitionmanager.cpp expected 1 startup decrypt block, got {text.count(old)}')
+          pm.write_text(text.replace(old, new, 1))
+
+          action = root / 'gui/action.cpp'
+          text = action.read_text()
+
+          # Existing decrypt page must also initialize metadata mapping first.
+          old = '} else {\n\t\tstring Password;'
+          new = ('} else {\n'
+                 '\t\tLOGINFO("b2q: running deferred Decrypt_Data() from GUI decrypt action\\n");\n'
+                 '\t\tPartitionManager.Decrypt_Data();\n\n'
+                 '\t\tstring Password;')
+          if text.count(old) != 1:
+              raise SystemExit(f'gui/action.cpp expected 1 decrypt action block, got {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          # Mount can now perform a long metadata/FBE operation without blocking the UI thread.
+          caller_mount = '\t\tADD_ACTION(mount);\n'
+          if text.count(caller_mount) != 1:
+              raise SystemExit(f'expected one caller-thread mount registration, got {text.count(caller_mount)}')
+          text = text.replace(caller_mount, '', 1)
+          threaded_marker = '\t\t// These actions will run in a separate thread\n\t\tADD_ACTION(flash);'
+          threaded_repl = ('\t\t// These actions will run in a separate thread\n'
+                           '\t\tADD_ACTION(mount);\n'
+                           '\t\tADD_ACTION(flash);')
+          if text.count(threaded_marker) != 1:
+              raise SystemExit('threaded action marker not found exactly once')
+          text = text.replace(threaded_marker, threaded_repl, 1)
+
+          old = ('\t} else if (!simulate) {\n'
+                 '\t\tPartitionManager.Mount_By_Path(arg, true);\n'
+                 '\t\tPartitionManager.Add_MTP_Storage(arg);')
+          new = ('\t} else if (!simulate) {\n'
+                 '#ifdef TW_INCLUDE_CRYPTO\n'
+                 '\t\tif (arg == "/data" && DataManager::GetIntValue(TW_IS_ENCRYPTED) != 0) {\n'
+                 '\t\t\tLOGINFO("b2q: /data mount requested; running deferred Decrypt_Data() before mount\\n");\n'
+                 '\t\t\tPartitionManager.Decrypt_Data();\n'
+                 '\t\t}\n'
+                 '#endif\n'
+                 '\t\tPartitionManager.Mount_By_Path(arg, true);\n'
+                 '\t\tPartitionManager.Add_MTP_Storage(arg);\n'
+                 '\t\tif (arg == "/data")\n'
+                 '\t\t\tPartitionManager.Update_System_Details();')
+          if text.count(old) != 1:
+              raise SystemExit(f'GUIAction::mount block expected once, got {text.count(old)}')
+          action.write_text(text.replace(old, new, 1))
+          PY
+
+          cd "$RECOVERY"
+          grep -Fq 'b2q: deferring initial Decrypt_Data() until user action' partitionmanager.cpp
+          grep -Fq 'b2q: /data mount requested; running deferred Decrypt_Data() before mount' gui/action.cpp
+          grep -Fq 'b2q: running deferred Decrypt_Data() from GUI decrypt action' gui/action.cpp
+          if grep -A6 -F 'DataManager::SetValue(TW_IS_ENCRYPTED, 1);' partitionmanager.cpp | grep -Fq $'\t\tDecrypt_Data();'; then
+            echo 'Automatic startup Decrypt_Data() is still active' >&2
+            exit 1
+          fi
+          echo '[b2q] test6 mount-decrypt patch verified'
+
+      - name: Build recovery.img
+        shell: bash
+        run: |
+          set -eo pipefail
+          cd "$GITHUB_WORKSPACE/twrp"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+          ccache -M 5G
+          source build/envsetup.sh
+          lunch twrp_b2q-eng
+          mka -j"$(nproc)" recoveryimage
+
+      - name: Verify recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
+          test -s "$OUT/recovery.img"
+          stat "$OUT/recovery.img"
+          sha256sum "$OUT/recovery.img" | tee "$OUT/recovery.img.sha256"
+          if [ "$(stat -c %s "$OUT/recovery.img")" -gt 100663296 ]; then
+            echo 'recovery.img exceeds the 96 MiB recovery partition' >&2
+            exit 1
+          fi
+
+      - name: Upload test6 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-b2q-mount-decrypt-test6-${{ github.sha }}
+          path: |
+            twrp/out/target/product/b2q/recovery.img
+            twrp/out/target/product/b2q/recovery.img.sha256
+          if-no-files-found: error
+          retention-days: 14
