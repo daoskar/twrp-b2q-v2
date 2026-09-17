@@ -23,5 +23,5 @@
 
 /persist	ext4		/dev/block/bootdevice/by-name/persist		flags=fsflags=ro;display="Persist"
 
-# Removable partitions - resolved dynamically by twrp-otg-watch.sh
-/usb-otg	auto		/dev/block/twrp-usb1	/dev/block/twrp-usb	flags=display="USB-OTG";storage;wipeingui;removable
+# Removable partitions
+/usb-otg	auto		/dev/block/sdf1	/dev/block/sdf			flags=display="USB-OTG";storage;wipeingui;removable
