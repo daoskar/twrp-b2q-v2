@@ -80,15 +80,15 @@ jobs:
           # test6e: stock b2q Keymaster lives on the mounted stock /vendor.
           cat >> recovery/root/init.recovery.qcom.rc <<'EOF'
 
-# b2q test6e: stock Keymaster 4.0 backend for keystore2.
-service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service
-    interface android.hardware.keymaster@4.0::IKeymasterDevice default
-    class early_hal
-    user root
-    group root
-    disabled
-    seclabel u:r:recovery:s0
-EOF
+          # b2q test6e: stock Keymaster 4.0 backend for keystore2.
+          service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service
+              interface android.hardware.keymaster@4.0::IKeymasterDevice default
+              class early_hal
+              user root
+              group root
+              disabled
+              seclabel u:r:recovery:s0
+          EOF
           grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
 
           python3 - "$RECOVERY" "$VOLD" <<'PY'
