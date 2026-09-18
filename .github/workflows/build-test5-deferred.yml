@@ -82,6 +82,7 @@ jobs:
 
           # b2q test6g: QSEE daemon required by the stock Keymaster TEE path.
           service vendor.qseecomd /vendor/bin/qseecomd
+              override
               class core
               user root
               group root
@@ -91,6 +92,7 @@ jobs:
 
           # b2q test6g: stock Keymaster 4.0 backend for keystore2.
           service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service
+              override
               interface android.hardware.keymaster@4.0::IKeymasterDevice default
               class early_hal
               user root
@@ -100,6 +102,7 @@ jobs:
               seclabel u:r:recovery:s0
           EOF
           grep -Fq 'service vendor.qseecomd /vendor/bin/qseecomd' recovery/root/init.recovery.qcom.rc
+          grep -Fq '              override' recovery/root/init.recovery.qcom.rc
           grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
           grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
 
