@@ -1,4 +1,4 @@
-name: Build TWRP b2q qsee-keymaster test6g
+name: Build TWRP b2q keymaster-hal test6h
 
 on:
   push:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6g device tree
+      - name: Checkout test6h device tree
         uses: actions/checkout@v4
         with:
           ref: test6-async-metadata
@@ -144,6 +144,22 @@ jobs:
               raise SystemExit(f'Keymaster.cpp ctor anchor count={kmtext.count(ctor_old)}')
           km.write_text(kmtext.replace(ctor_old, ctor_new, 1))
 
+          # test6h: link recovery against Keymaster 4.0 so the GUI action can
+          # verify that the HIDL service is actually registered, not merely
+          # that the vendor process is alive.
+          mk = root / 'Android.mk'
+          mktext = mk.read_text()
+          mk_old = '''        android.hardware.gatekeeper@1.0 \\
+        android.hardware.weaver@1.0 \\
+'''
+          mk_new = '''        android.hardware.gatekeeper@1.0 \\
+        android.hardware.keymaster@4.0 \\
+        android.hardware.weaver@1.0 \\
+'''
+          if mktext.count(mk_old) != 1:
+              raise SystemExit(f'Android.mk keymaster link anchor count={mktext.count(mk_old)}')
+          mk.write_text(mktext.replace(mk_old, mk_new, 1))
+
           # 1) Keep startup stable: crypto is compiled, but metadata mapping is not
           #    allowed to block Setup_Fstab_Partitions().
           pm = root / 'partitionmanager.cpp'
@@ -166,6 +182,11 @@ jobs:
 
           action = root / 'gui/action.cpp'
           text = action.read_text()
+          include_old = '#include <android-base/properties.h>\n'
+          include_new = '#include <android-base/properties.h>\n#include <android/hardware/keymaster/4.0/IKeymasterDevice.h>\n'
+          if text.count(include_old) != 1:
+              raise SystemExit(f'action.cpp keymaster include anchor count={text.count(include_old)}')
+          text = text.replace(include_old, include_new, 1)
           old = '\t\tADD_ACTION(decrypt);\n'
           new = '\t\tADD_ACTION(preparedecrypt);\n\t\tADD_ACTION(decrypt);\n'
           if text.count(old) != 1:
@@ -245,7 +266,19 @@ jobs:
           \t\t\treturn 0;
           \t\t}
           \t\tgui_msg("b2q_keymaster_ok=[b2q] KEYMASTER RUNNING");
-          \t\tusleep(500000);
+          \t\tgui_msg("b2q_keymaster_hal_wait=[b2q] KEYMASTER HAL WAIT");
+          \t\tandroid::sp<android::hardware::keymaster::V4_0::IKeymasterDevice> keymaster_hal;
+          \t\tfor (int i = 0; i < 50 && keymaster_hal == nullptr; ++i) {
+          \t\t\tkeymaster_hal = android::hardware::keymaster::V4_0::IKeymasterDevice::tryGetService("default", false);
+          \t\t\tif (keymaster_hal == nullptr)
+          \t\t\t\tusleep(100000);
+          \t\t}
+          \t\tif (keymaster_hal == nullptr) {
+          \t\t\tgui_err("b2q_keymaster_hal_fail=[b2q] KEYMASTER HAL FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_msg("b2q_keymaster_hal_ok=[b2q] KEYMASTER HAL READY");
 
           \t\tgui_msg("b2q_keystore_start=[b2q] KEYSTORE2 RESTART");
           \t\tandroid::base::SetProperty("ctl.stop", "keystore2");
@@ -318,6 +351,9 @@ jobs:
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
           grep -Fq 'QSEECOMD RUNNING' gui/action.cpp
+          grep -Fq 'KEYMASTER HAL READY' gui/action.cpp
+          grep -Fq '#include <android/hardware/keymaster/4.0/IKeymasterDevice.h>' gui/action.cpp
+          grep -Fq 'android.hardware.keymaster@4.0' Android.mk
           grep -Fq 'KEYMASTER DIR OK' gui/action.cpp
           grep -Fq 'KEYMASTER RUNNING' gui/action.cpp
           grep -Fq 'KEYSTORE2 RUNNING' gui/action.cpp
@@ -336,7 +372,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6g QSEE + stock Keymaster + keystore2 metadata decrypt patch verified'
+          echo '[b2q] test6h QSEE + Keymaster HIDL-ready + keystore2 metadata decrypt patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -364,10 +400,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6g artifact
+      - name: Upload test6h artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-qsee-keymaster-test6g-${{ github.sha }}
+          name: TWRP-b2q-keymaster-hal-test6h-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
