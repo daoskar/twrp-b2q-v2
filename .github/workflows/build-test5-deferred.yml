@@ -149,13 +149,11 @@ jobs:
           # that the vendor process is alive.
           mk = root / 'Android.mk'
           mktext = mk.read_text()
-          mk_old = '''        android.hardware.gatekeeper@1.0 \\
-        android.hardware.weaver@1.0 \\
-'''
-          mk_new = '''        android.hardware.gatekeeper@1.0 \\
-        android.hardware.keymaster@4.0 \\
-        android.hardware.weaver@1.0 \\
-'''
+          mk_old = ('        android.hardware.gatekeeper@1.0 \\\n'
+                    '        android.hardware.weaver@1.0 \\\n')
+          mk_new = ('        android.hardware.gatekeeper@1.0 \\\n'
+                    '        android.hardware.keymaster@4.0 \\\n'
+                    '        android.hardware.weaver@1.0 \\\n')
           if mktext.count(mk_old) != 1:
               raise SystemExit(f'Android.mk keymaster link anchor count={mktext.count(mk_old)}')
           mk.write_text(mktext.replace(mk_old, mk_new, 1))
