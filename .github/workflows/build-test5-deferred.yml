@@ -1,4 +1,4 @@
-name: Build TWRP b2q keymaster test6f
+name: Build TWRP b2q qsee-keymaster test6g
 
 on:
   push:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6f device tree
+      - name: Checkout test6g device tree
         uses: actions/checkout@v4
         with:
           ref: test6-async-metadata
@@ -80,7 +80,16 @@ jobs:
           # test6e: stock b2q Keymaster lives on the mounted stock /vendor.
           cat >> recovery/root/init.recovery.qcom.rc <<'EOF'
 
-          # b2q test6e: stock Keymaster 4.0 backend for keystore2.
+          # b2q test6g: QSEE daemon required by the stock Keymaster TEE path.
+          service vendor.qseecomd /vendor/bin/qseecomd
+              class core
+              user root
+              group root
+              setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
+              disabled
+              seclabel u:r:recovery:s0
+
+          # b2q test6g: stock Keymaster 4.0 backend for keystore2.
           service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service
               interface android.hardware.keymaster@4.0::IKeymasterDevice default
               class early_hal
@@ -90,6 +99,7 @@ jobs:
               disabled
               seclabel u:r:recovery:s0
           EOF
+          grep -Fq 'service vendor.qseecomd /vendor/bin/qseecomd' recovery/root/init.recovery.qcom.rc
           grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
           grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
 
@@ -192,6 +202,26 @@ jobs:
           \t\t}
           \t\tgui_msg("b2q_efs_bind_ok=[b2q] EFS BIND OK");
 
+          \t\tgui_msg("b2q_qsee_dev_start=[b2q] QSEE DEVICE WAIT");
+          \t\tfor (int i = 0; i < 50 && !TWFunc::Path_Exists("/dev/qseecom"); ++i)
+          \t\t\tusleep(100000);
+          \t\tif (!TWFunc::Path_Exists("/dev/qseecom")) {
+          \t\t\tgui_err("b2q_qsee_dev_fail=[b2q] QSEE DEVICE FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_msg("b2q_qsee_start=[b2q] QSEECOMD START");
+          \t\tandroid::base::SetProperty("ctl.start", "vendor.qseecomd");
+          \t\tfor (int i = 0; i < 50 && android::base::GetProperty("init.svc.vendor.qseecomd", "") != "running"; ++i)
+          \t\t\tusleep(100000);
+          \t\tif (android::base::GetProperty("init.svc.vendor.qseecomd", "") != "running") {
+          \t\t\tgui_err("b2q_qsee_fail=[b2q] QSEECOMD FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_msg("b2q_qsee_ok=[b2q] QSEECOMD RUNNING");
+          \t\tusleep(500000);
+
           \t\tgui_msg("b2q_keymaster_dir_start=[b2q] KEYMASTER DIR START");
           \t\tif (!TWFunc::Recursive_Mkdir("/data/vendor/keymaster")) {
           \t\t\tgui_err("b2q_keymaster_dir_fail=[b2q] KEYMASTER DIR FAIL");
@@ -284,6 +314,7 @@ jobs:
           grep -Fq 'ADD_ACTION(preparedecrypt);' gui/action.cpp
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
+          grep -Fq 'QSEECOMD RUNNING' gui/action.cpp
           grep -Fq 'KEYMASTER DIR OK' gui/action.cpp
           grep -Fq 'KEYMASTER RUNNING' gui/action.cpp
           grep -Fq 'KEYSTORE2 RUNNING' gui/action.cpp
@@ -302,7 +333,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6f stock Keymaster runtime dirs + keystore2 metadata decrypt patch verified'
+          echo '[b2q] test6g QSEE + stock Keymaster + keystore2 metadata decrypt patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -330,10 +361,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6f artifact
+      - name: Upload test6g artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-keymaster-test6f-${{ github.sha }}
+          name: TWRP-b2q-qsee-keymaster-test6g-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
