@@ -102,7 +102,7 @@ jobs:
               seclabel u:r:recovery:s0
           EOF
           grep -Fq 'service vendor.qseecomd /vendor/bin/qseecomd' recovery/root/init.recovery.qcom.rc
-          grep -Fq '              override' recovery/root/init.recovery.qcom.rc
+          test "$(grep -Fc '    override' recovery/root/init.recovery.qcom.rc)" -eq 2
           grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
           grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
 
