@@ -1,4 +1,4 @@
-name: Build TWRP b2q keymaster test6e
+name: Build TWRP b2q keymaster test6f
 
 on:
   push:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6e device tree
+      - name: Checkout test6f device tree
         uses: actions/checkout@v4
         with:
           ref: test6-async-metadata
@@ -190,6 +190,16 @@ jobs:
           \t\t}
           \t\tgui_msg("b2q_efs_bind_ok=[b2q] EFS BIND OK");
 
+          \t\tgui_msg("b2q_keymaster_dir_start=[b2q] KEYMASTER DIR START");
+          \t\tif (TWFunc::Recursive_Mkdir("/data/vendor/keymaster") != 0) {
+          \t\t\tgui_err("b2q_keymaster_dir_fail=[b2q] KEYMASTER DIR FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tchmod("/data/vendor", 0775);
+          \t\tchmod("/data/vendor/keymaster", 0775);
+          \t\tgui_msg("b2q_keymaster_dir_ok=[b2q] KEYMASTER DIR OK");
+
           \t\tgui_msg("b2q_keymaster_start=[b2q] KEYMASTER START");
           \t\tandroid::base::SetProperty("ctl.start", "vendor.keymaster-4-0");
           \t\tfor (int i = 0; i < 50 && android::base::GetProperty("init.svc.vendor.keymaster-4-0", "") != "running"; ++i)
@@ -272,6 +282,7 @@ jobs:
           grep -Fq 'ADD_ACTION(preparedecrypt);' gui/action.cpp
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
+          grep -Fq 'KEYMASTER DIR OK' gui/action.cpp
           grep -Fq 'KEYMASTER RUNNING' gui/action.cpp
           grep -Fq 'KEYSTORE2 RUNNING' gui/action.cpp
           grep -Fq 'AServiceManager_checkService' "$VOLD/Keymaster.cpp"
@@ -289,7 +300,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6e Keymaster + keystore2 metadata decrypt patch verified'
+          echo '[b2q] test6f stock Keymaster runtime dirs + keystore2 metadata decrypt patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -317,10 +328,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6e artifact
+      - name: Upload test6f artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-keymaster-test6e-${{ github.sha }}
+          name: TWRP-b2q-keymaster-test6f-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
