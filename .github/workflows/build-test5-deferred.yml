@@ -1,4 +1,4 @@
-name: Build TWRP b2q keymaster-hal test6h2
+name: Build TWRP b2q stock-keymaster test6i
 
 on:
   push:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6h2 device tree
+      - name: Checkout test6i device tree
         uses: actions/checkout@v4
         with:
           ref: test6-async-metadata
@@ -90,13 +90,13 @@ jobs:
               disabled
               seclabel u:r:recovery:s0
 
-          # b2q test6g: stock Keymaster 4.0 backend for keystore2.
+          # b2q test6i: match the stock q2q Keymaster runtime identity.
           service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service
               override
               interface android.hardware.keymaster@4.0::IKeymasterDevice default
               class early_hal
-              user root
-              group root
+              user system
+              group system drmrpc
               setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
               disabled
               seclabel u:r:recovery:s0
@@ -239,6 +239,32 @@ jobs:
           \t\t}
           \t\tgui_msg("b2q_efs_bind_ok=[b2q] EFS BIND OK");
 
+          \t\tgui_msg("b2q_firmware_start=[b2q] FIRMWARE MOUNT START");
+          \t\tif (!TWFunc::Path_Exists("/vendor/firmware_mnt")) {
+          \t\t\tgui_err("b2q_firmware_dir_fail=[b2q] FIRMWARE DIR FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tif (TWFunc::Exec_Cmd("grep -q ' /vendor/firmware_mnt ' /proc/mounts || mount -t vfat -o ro,shortname=lower,uid=0,gid=1000,dmask=227,fmask=337 /dev/block/bootdevice/by-name/apnhlos /vendor/firmware_mnt", false) != 0) {
+          \t\t\tgui_err("b2q_firmware_mount_fail=[b2q] FIRMWARE MOUNT FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tif (!TWFunc::Path_Exists("/vendor/firmware_mnt/image")) {
+          \t\t\tgui_err("b2q_firmware_image_fail=[b2q] FIRMWARE IMAGE FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_msg("b2q_firmware_ok=[b2q] FIRMWARE MOUNT OK");
+
+          \t\tgui_msg("b2q_dak_start=[b2q] DAK PREP START");
+          \t\tif (TWFunc::Exec_Cmd("mkdir -p /mnt/vendor/efs/DAK && chown 1000:1000 /mnt/vendor/efs/DAK && chmod 0775 /mnt/vendor/efs/DAK && if [ -e /mnt/vendor/efs/DAK/gakkeybox ]; then chown 1000:1000 /mnt/vendor/efs/DAK/gakkeybox; chmod 0644 /mnt/vendor/efs/DAK/gakkeybox; fi && restorecon -R /mnt/vendor/efs/DAK >/dev/null 2>&1 || true", false) != 0) {
+          \t\t\tgui_err("b2q_dak_fail=[b2q] DAK PREP FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_msg("b2q_dak_ok=[b2q] DAK PREP OK");
+
           \t\tgui_msg("b2q_qsee_dev_start=[b2q] QSEE DEVICE WAIT");
           \t\tfor (int i = 0; i < 50 && !TWFunc::Path_Exists("/dev/qseecom"); ++i)
           \t\t\tusleep(100000);
@@ -267,6 +293,11 @@ jobs:
           \t\t}
           \t\tchmod("/data/vendor", 0775);
           \t\tchmod("/data/vendor/keymaster", 0775);
+          \t\tif (TWFunc::Exec_Cmd("chown 1000:1000 /data/vendor /data/vendor/keymaster", false) != 0) {
+          \t\t\tgui_err("b2q_keymaster_owner_fail=[b2q] KEYMASTER OWNER FAIL");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
           \t\tgui_msg("b2q_keymaster_dir_ok=[b2q] KEYMASTER DIR OK");
 
           \t\tgui_msg("b2q_keymaster_start=[b2q] KEYMASTER START");
@@ -287,6 +318,10 @@ jobs:
           \t\t\t\tusleep(100000);
           \t\t}
           \t\tif (keymaster_hal == nullptr) {
+          \t\t\tstd::string km_diag;
+          \t\t\tTWFunc::Exec_Cmd("logcat -d -v brief 2>/dev/null | grep -Ei 'keymaster|qsee|keystore|tee|drmrpc' | tail -n 80", km_diag, true);
+          \t\t\tLOGINFO("b2q: keymaster HAL diagnostic log:\\n%s\\n", km_diag.c_str());
+          \t\t\tLOGINFO("b2q: keymaster service state: %s\\n", android::base::GetProperty("init.svc.vendor.keymaster-4-0", "").c_str());
           \t\t\tgui_err("b2q_keymaster_hal_fail=[b2q] KEYMASTER HAL FAIL");
           \t\t\toperation_end(1);
           \t\t\treturn 0;
@@ -364,6 +399,9 @@ jobs:
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
           grep -Fq 'QSEECOMD RUNNING' gui/action.cpp
+          grep -Fq 'FIRMWARE MOUNT OK' gui/action.cpp
+          grep -Fq 'DAK PREP OK' gui/action.cpp
+          grep -Fq 'chown 1000:1000 /data/vendor /data/vendor/keymaster' gui/action.cpp
           grep -Fq 'KEYMASTER HAL READY' gui/action.cpp
           grep -Fq '#include <android/hardware/keymaster/4.0/IKeymasterDevice.h>' gui/action.cpp
           grep -Fq 'android.hardware.keymaster@4.0' Android.mk
@@ -386,7 +424,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6h2 GUI-linked Keymaster HIDL + keystore2 metadata decrypt patch verified'
+          echo '[b2q] test6i stock SM8350 firmware + DAK + Keymaster runtime patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -414,10 +452,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6h2 artifact
+      - name: Upload test6i artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-keymaster-hal-test6h2-${{ github.sha }}
+          name: TWRP-b2q-stock-keymaster-test6i-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
