@@ -86,10 +86,12 @@ jobs:
               class early_hal
               user root
               group root
+              setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
               disabled
               seclabel u:r:recovery:s0
           EOF
           grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
+          grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
 
           python3 - "$RECOVERY" "$VOLD" <<'PY'
           import sys
