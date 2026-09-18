@@ -191,7 +191,7 @@ jobs:
           \t\tgui_msg("b2q_efs_bind_ok=[b2q] EFS BIND OK");
 
           \t\tgui_msg("b2q_keymaster_dir_start=[b2q] KEYMASTER DIR START");
-          \t\tif (TWFunc::Recursive_Mkdir("/data/vendor/keymaster") != 0) {
+          \t\tif (!TWFunc::Recursive_Mkdir("/data/vendor/keymaster")) {
           \t\t\tgui_err("b2q_keymaster_dir_fail=[b2q] KEYMASTER DIR FAIL");
           \t\t\toperation_end(1);
           \t\t\treturn 0;
