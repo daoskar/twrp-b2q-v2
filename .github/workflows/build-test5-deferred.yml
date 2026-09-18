@@ -162,15 +162,13 @@ jobs:
           # itself also needs the Keymaster HIDL dependency for generated headers.
           guibp = root / 'gui/Android.bp'
           bptext = guibp.read_text()
-          bp_old = '''        "libselinux",
-        "libziparchive"
-    ],
-'''
-          bp_new = '''        "libselinux",
-        "libziparchive",
-        "android.hardware.keymaster@4.0"
-    ],
-'''
+          bp_old = ('        "libselinux",\n'
+                    '        "libziparchive"\n'
+                    '    ],\n')
+          bp_new = ('        "libselinux",\n'
+                    '        "libziparchive",\n'
+                    '        "android.hardware.keymaster@4.0"\n'
+                    '    ],\n')
           if bptext.count(bp_old) != 1:
               raise SystemExit(f'gui/Android.bp shared_libs anchor count={bptext.count(bp_old)}')
           guibp.write_text(bptext.replace(bp_old, bp_new, 1))
