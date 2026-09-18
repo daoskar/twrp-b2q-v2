@@ -1,4 +1,4 @@
-name: Build TWRP b2q keymaster-hal test6h
+name: Build TWRP b2q keymaster-hal test6h2
 
 on:
   push:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6h device tree
+      - name: Checkout test6h2 device tree
         uses: actions/checkout@v4
         with:
           ref: test6-async-metadata
@@ -157,6 +157,23 @@ jobs:
           if mktext.count(mk_old) != 1:
               raise SystemExit(f'Android.mk keymaster link anchor count={mktext.count(mk_old)}')
           mk.write_text(mktext.replace(mk_old, mk_new, 1))
+
+          # test6h: action.cpp is compiled into libguitwrp, so the GUI module
+          # itself also needs the Keymaster HIDL dependency for generated headers.
+          guibp = root / 'gui/Android.bp'
+          bptext = guibp.read_text()
+          bp_old = '''        "libselinux",
+        "libziparchive"
+    ],
+'''
+          bp_new = '''        "libselinux",
+        "libziparchive",
+        "android.hardware.keymaster@4.0"
+    ],
+'''
+          if bptext.count(bp_old) != 1:
+              raise SystemExit(f'gui/Android.bp shared_libs anchor count={bptext.count(bp_old)}')
+          guibp.write_text(bptext.replace(bp_old, bp_new, 1))
 
           # 1) Keep startup stable: crypto is compiled, but metadata mapping is not
           #    allowed to block Setup_Fstab_Partitions().
@@ -352,6 +369,7 @@ jobs:
           grep -Fq 'KEYMASTER HAL READY' gui/action.cpp
           grep -Fq '#include <android/hardware/keymaster/4.0/IKeymasterDevice.h>' gui/action.cpp
           grep -Fq 'android.hardware.keymaster@4.0' Android.mk
+          grep -Fq 'android.hardware.keymaster@4.0' gui/Android.bp
           grep -Fq 'KEYMASTER DIR OK' gui/action.cpp
           grep -Fq 'KEYMASTER RUNNING' gui/action.cpp
           grep -Fq 'KEYSTORE2 RUNNING' gui/action.cpp
@@ -370,7 +388,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6h QSEE + Keymaster HIDL-ready + keystore2 metadata decrypt patch verified'
+          echo '[b2q] test6h2 GUI-linked Keymaster HIDL + keystore2 metadata decrypt patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -398,10 +416,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6h artifact
+      - name: Upload test6h2 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-keymaster-hal-test6h-${{ github.sha }}
+          name: TWRP-b2q-keymaster-hal-test6h2-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
