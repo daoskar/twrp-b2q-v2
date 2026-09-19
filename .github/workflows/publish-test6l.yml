@@ -1,0 +1,170 @@
+name: Publish verified TWRP b2q test6l
+
+on:
+  push:
+    branches:
+      - test6l-qsee-after-fw-probe
+    paths:
+      - '.github/workflows/publish-test6l.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '35465247507'
+      SOURCE_ARTIFACT: 'TWRP-b2q-qsee-after-fw-test6l-ec63335beb9b16de960e8f596c854da9b70ee85c'
+      SOURCE_SHA: 'ec63335beb9b16de960e8f596c854da9b70ee85c'
+      RECOVERY_SHA256: '894602d04366ba1bc057088bdb454a089cbf52fc037e345e55da52a1dc96c38e'
+      RECOVERY_SIZE: '100663296'
+      TAG: 'v0.1.0-test6l'
+
+    steps:
+      - name: Download verified build artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$SOURCE_ARTIFACT" \
+            --dir dist
+          test -f dist/recovery.img
+          test -f dist/recovery.img.sha256
+
+      - name: Verify recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          test "$(stat -c '%s' recovery.img)" = "$RECOVERY_SIZE"
+          echo "$RECOVERY_SHA256  recovery.img" | sha256sum -c -
+          grep -Fq "$RECOVERY_SHA256" recovery.img.sha256
+
+      - name: Verify test6l logic inside recovery ramdisk
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+
+          img = Path("dist/recovery.img").read_bytes()
+          if img[:8] != b"ANDROID!":
+              raise SystemExit("not an Android boot image")
+
+          kernel_size = struct.unpack_from("<I", img, 8)[0]
+          ramdisk_size = struct.unpack_from("<I", img, 16)[0]
+          page_size = struct.unpack_from("<I", img, 36)[0]
+          header_version = struct.unpack_from("<I", img, 40)[0]
+
+          if page_size <= 0:
+              raise SystemExit(f"invalid page size: {page_size}")
+          if header_version != 2:
+              raise SystemExit(f"unexpected boot header version: {header_version}")
+
+          align = lambda n: (n + page_size - 1) // page_size * page_size
+          ramdisk_off = page_size + align(kernel_size)
+          ramdisk = img[ramdisk_off:ramdisk_off + ramdisk_size]
+          if len(ramdisk) != ramdisk_size:
+              raise SystemExit("truncated ramdisk")
+
+          Path("/tmp/b2q-ramdisk.bin").write_bytes(ramdisk)
+          print(f"boot header v{header_version}, page={page_size}, kernel={kernel_size}, ramdisk={ramdisk_size}, offset={ramdisk_off}")
+          print("ramdisk magic:", ramdisk[:8].hex())
+          PY
+
+          MAGIC="$(xxd -p -l 4 /tmp/b2q-ramdisk.bin)"
+          case "$MAGIC" in
+            1f8b*)
+              gzip -dc /tmp/b2q-ramdisk.bin > /tmp/b2q-ramdisk.cpio
+              ;;
+            02214c18|04224d18)
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq lz4
+              lz4 -dc /tmp/b2q-ramdisk.bin > /tmp/b2q-ramdisk.cpio
+              ;;
+            *)
+              cp /tmp/b2q-ramdisk.bin /tmp/b2q-ramdisk.cpio
+              ;;
+          esac
+
+          grep -aFq 'b2q-firmware-probe.sh' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'modem image tree is valid; selecting stock SM8350 fstab.emmc layout' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'FIRMWARE IMAGE MISSING - CONTINUE' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'STOCK QSEE + KEYMASTER BINARIES OK' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'QSEECOMD RUNNING' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'KEYMASTER HAL READY' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'DM DEFAULT KEY READY' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'F2FS MOUNT START' /tmp/b2q-ramdisk.cpio
+          echo '[b2q] test6l firmware fallback/QSEE/Keymaster/dm-F2FS logic confirmed in final ramdisk'
+
+      - name: Build Odin packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          BASE="TWRP-b2q-test6l-ec63335b"
+          tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
+          cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
+          md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
+          sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
+          tar -tf "$BASE-Odin.tar"
+
+      - name: Publish prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          ## TWRP b2q v2 — test6l
+
+          Samsung Galaxy Z Flip3 **SM-F711B / b2q**.
+
+          Built from exact commit `ec63335beb9b16de960e8f596c854da9b70ee85c`
+          in GitHub Actions run **#34**.
+
+          test6l follows the on-device test6k result where Prepare Data stopped at
+          `FIRMWARE PROBE FAIL`.
+
+          Changes:
+          - firmware probe failure is diagnostic only; it no longer blocks QSEE/Keymaster
+          - when `apnhlos` lacks a usable `image/` tree but `modem/image` is valid,
+            test6l uses the stock SM8350 `fstab.emmc` style modem firmware layout read-only
+          - verifies stock `/vendor/bin/qseecomd`
+          - verifies stock `/vendor/bin/hw/android.hardware.keymaster@4.0-service`
+          - continues through QSEE → Keymaster HAL → keystore2 → metadata mapping
+          - retains dm-default-key and F2FS diagnostics
+          - custom b2q checkpoints use literal `gui_print`, removing false
+            `String resource ... not found` errors
+          - CI checkout is pinned to the triggering commit SHA
+
+          Verified:
+          - recovery size: **100663296 bytes (96 MiB)**
+          - recovery SHA-256: `894602d04366ba1bc057088bdb454a089cbf52fc037e345e55da52a1dc96c38e`
+          - final ramdisk contains the test6l firmware fallback and QSEE/Keymaster/dm/F2FS checkpoints
+
+          **Testing:** boot test6l, then **Mount → Prepare Data**.
+          Do not manually mount `/data` first and do not Format Data.
+          The last visible `[b2q]` checkpoint is the key result.
+          EOF
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title 'TWRP b2q v2 — test6l QSEE after firmware probe (ec63335b)' \
+            --prerelease \
+            --notes-file /tmp/release-notes.md \
+            dist/TWRP-b2q-test6l-ec63335b-Odin.tar.md5 \
+            dist/TWRP-b2q-test6l-ec63335b-Odin.tar \
+            dist/recovery.img \
+            dist/recovery.img.sha256 \
+            dist/SHA256SUMS.txt
