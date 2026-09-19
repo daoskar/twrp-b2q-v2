@@ -1,0 +1,182 @@
+name: Publish verified TWRP b2q test6m
+
+on:
+  push:
+    branches:
+      - test6m-spu-keymaster
+    paths:
+      - '.github/workflows/publish-test6m.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '35469436437'
+      SOURCE_ARTIFACT: 'TWRP-b2q-spu-keymaster-test6m-28326de4ecdf0b800b5f28cafd5cf1d63deefb44'
+      SOURCE_SHA: '28326de4ecdf0b800b5f28cafd5cf1d63deefb44'
+      RECOVERY_SIZE: '100663296'
+      TAG: 'v0.1.0-test6m'
+
+    steps:
+      - name: Wait for exact source build
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Waiting for source run $SOURCE_RUN_ID ($SOURCE_SHA)"
+          gh run watch "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status
+          ACTUAL_SHA="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq .head_sha)"
+          test "$ACTUAL_SHA" = "$SOURCE_SHA"
+
+      - name: Download exact build artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$SOURCE_ARTIFACT" \
+            --dir dist
+          test -f dist/recovery.img
+          test -f dist/recovery.img.sha256
+
+      - name: Verify recovery image and source checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          test "$(stat -c '%s' recovery.img)" = "$RECOVERY_SIZE"
+          EXPECTED="$(awk 'NR==1 {print $1}' recovery.img.sha256)"
+          test -n "$EXPECTED"
+          echo "$EXPECTED  recovery.img" | sha256sum -c -
+          sha256sum recovery.img
+          echo "RECOVERY_SHA256=$EXPECTED" >> "$GITHUB_ENV"
+
+      - name: Verify test6m logic inside final recovery ramdisk
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+
+          img = Path("dist/recovery.img").read_bytes()
+          if img[:8] != b"ANDROID!":
+              raise SystemExit("not an Android boot image")
+
+          kernel_size = struct.unpack_from("<I", img, 8)[0]
+          ramdisk_size = struct.unpack_from("<I", img, 16)[0]
+          page_size = struct.unpack_from("<I", img, 36)[0]
+          header_version = struct.unpack_from("<I", img, 40)[0]
+
+          if page_size <= 0:
+              raise SystemExit(f"invalid page size: {page_size}")
+          if header_version != 2:
+              raise SystemExit(f"unexpected boot header version: {header_version}")
+
+          align = lambda n: (n + page_size - 1) // page_size * page_size
+          ramdisk_off = page_size + align(kernel_size)
+          ramdisk = img[ramdisk_off:ramdisk_off + ramdisk_size]
+          if len(ramdisk) != ramdisk_size:
+              raise SystemExit("truncated ramdisk")
+
+          Path("/tmp/b2q-ramdisk.bin").write_bytes(ramdisk)
+          print(f"boot header v{header_version}, page={page_size}, kernel={kernel_size}, ramdisk={ramdisk_size}, offset={ramdisk_off}")
+          PY
+
+          MAGIC="$(xxd -p -l 4 /tmp/b2q-ramdisk.bin)"
+          case "$MAGIC" in
+            1f8b*)
+              gzip -dc /tmp/b2q-ramdisk.bin > /tmp/b2q-ramdisk.cpio
+              ;;
+            02214c18|04224d18)
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq lz4
+              lz4 -dc /tmp/b2q-ramdisk.bin > /tmp/b2q-ramdisk.cpio
+              ;;
+            *)
+              cp /tmp/b2q-ramdisk.bin /tmp/b2q-ramdisk.cpio
+              ;;
+          esac
+
+          grep -aFq 'service vendor.spdaemon /vendor/bin/spdaemon' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'service vendor.sec_nvm /vendor/bin/sec_nvm' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'SPU PREP START' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'PERSIST RO READY' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'SPDAEMON + SEC_NVM START' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'SPU SERVICES RUNNING' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'keymaster/SPU HAL diagnostics' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'KEYMASTER HAL READY' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'KEYSTORE2 RUNNING' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'DM DEFAULT KEY READY' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'F2FS MOUNT START' /tmp/b2q-ramdisk.cpio
+          echo '[b2q] test6m SPU/Keymaster logic confirmed in final recovery ramdisk'
+
+      - name: Build Odin packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          BASE="TWRP-b2q-test6m-28326de4"
+          tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
+          cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
+          md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
+          sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
+          tar -tf "$BASE-Odin.tar"
+
+      - name: Publish prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<EOF
+          ## TWRP b2q v2 — test6m SPU Keymaster
+
+          Samsung Galaxy Z Flip3 **SM-F711B / b2q**.
+
+          Built from exact commit \`$SOURCE_SHA\`
+          in GitHub Actions source run **#36**.
+
+          The on-device test6l result reached:
+          \`FIRMWARE READY → QSEECOMD RUNNING → KEYMASTER RUNNING → KEYMASTER HAL FAIL\`.
+
+          test6m addresses the next confirmed dependency in Samsung SM8350 Keymaster:
+          - stock \`libskeymaster4device.so\` performs SPU initialization before HAL registration
+          - starts Samsung stock \`spdaemon\` and \`sec_nvm\` before Keymaster
+          - prepares stock SM8350 SPU device nodes as \`0660 system:system\`
+          - mounts \`persist\` read-only and exposes it at \`/mnt/vendor/persist\`
+          - preserves firmware/QSEE/DAK preparation
+          - extends Keymaster HAL wait to 20 seconds
+          - on failure prints service states, SPU nodes and filtered SPU/Keymaster logs directly on screen
+          - preserves metadata, dm-default-key and F2FS diagnostics
+          - fixes the previous literal \`\\n\` checkpoint display
+
+          Verified final image:
+          - recovery size: **100663296 bytes (96 MiB)**
+          - recovery SHA-256: \`$RECOVERY_SHA256\`
+          - final ramdisk contains test6m SPU/Keymaster services and diagnostic checkpoints
+
+          **Testing:** boot test6m, then **Mount → Prepare Data**.
+          Do not manually mount \`/data\` first and do not Format Data.
+          EOF
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title 'TWRP b2q v2 — test6m SPU Keymaster (28326de4)' \
+            --prerelease \
+            --notes-file /tmp/release-notes.md \
+            dist/TWRP-b2q-test6m-28326de4-Odin.tar.md5 \
+            dist/TWRP-b2q-test6m-28326de4-Odin.tar \
+            dist/recovery.img \
+            dist/recovery.img.sha256 \
+            dist/SHA256SUMS.txt
