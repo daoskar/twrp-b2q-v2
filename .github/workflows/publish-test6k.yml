@@ -1,0 +1,106 @@
+name: Publish verified TWRP b2q test6k
+
+on:
+  push:
+    branches:
+      - test6k-firmware-probe
+    paths:
+      - '.github/workflows/publish-test6k.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '35449855705'
+      SOURCE_ARTIFACT: 'TWRP-b2q-firmware-probe-test6k-c798ef9dcea2aa9d257a99a9687bb098ca2b378c'
+      SOURCE_SHA: 'c798ef9dcea2aa9d257a99a9687bb098ca2b378c'
+      RECOVERY_SHA256: '2cd86d205a5eb0ff01f50caff9f9aab019d44da1cfb052253626790492428e06'
+      RECOVERY_SIZE: '100663296'
+      TAG: 'v0.1.0-test6k'
+
+    steps:
+      - name: Download verified build artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$SOURCE_ARTIFACT" \
+            --dir dist
+          test -f dist/recovery.img
+          test -f dist/recovery.img.sha256
+
+      - name: Verify recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          test "$(stat -c '%s' recovery.img)" = "$RECOVERY_SIZE"
+          echo "$RECOVERY_SHA256  recovery.img" | sha256sum -c -
+          grep -Fq "$RECOVERY_SHA256" recovery.img.sha256
+
+      - name: Build Odin packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          BASE="TWRP-b2q-test6k-c798ef9d"
+          tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
+          cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
+          md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
+          sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
+          tar -tf "$BASE-Odin.tar"
+
+      - name: Publish prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          ## TWRP b2q v2 — test6k firmware probe
+
+          Samsung Galaxy Z Flip3 **SM-F711B / b2q**.
+
+          Built from commit `c798ef9dcea2aa9d257a99a9687bb098ca2b378c`.
+
+          This build follows the test6j device result where **Prepare Data** stopped at
+          `FIRMWARE IMAGE FAIL` before QSEE/Keymaster.
+
+          test6k adds a read-only firmware-layout probe that:
+          - identifies the real `apnhlos`, `firmware`, and `modem` block aliases,
+          - inspects `/vendor/firmware_mnt` and `/vendor/firmware-modem`,
+          - accepts the normal `image/` layout,
+          - safely wraps a root-layout firmware filesystem as `/vendor/firmware_mnt/image`,
+          - probes a distinct `firmware` alias when present,
+          - only uses modem firmware as fallback when it actually contains a Keymaster-named trustlet,
+          - preserves the test6j dm-default-key/F2FS diagnostics after firmware preparation.
+
+          Verified GitHub Actions build #29:
+          - recovery image size: **100663296 bytes (96 MiB)**
+          - recovery SHA-256: `2cd86d205a5eb0ff01f50caff9f9aab019d44da1cfb052253626790492428e06`
+          - build, verification and artifact upload passed.
+
+          **Testing:** boot test6k and use **Mount → Prepare Data**. Do not manually mount `/data` first and do not Format Data. If it fails, capture the last visible `[b2q]` line and `/tmp/recovery.log`; the log now contains the firmware partition/layout probe.
+          EOF
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title 'TWRP b2q v2 — test6k firmware probe (c798ef9d)' \
+            --prerelease \
+            --notes-file /tmp/release-notes.md \
+            dist/TWRP-b2q-test6k-c798ef9d-Odin.tar.md5 \
+            dist/TWRP-b2q-test6k-c798ef9d-Odin.tar \
+            dist/recovery.img \
+            dist/recovery.img.sha256 \
+            dist/SHA256SUMS.txt
