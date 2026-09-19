@@ -184,15 +184,75 @@ jobs:
               raise SystemExit(f'partitionmanager.cpp expected 1 startup decrypt block, got {text.count(old)}')
           pm.write_text(text.replace(old, new, 1))
 
-          # test6j: instrument the exact metadata mapping -> dm-default-key -> F2FS
-          # path inside TWPartitionManager::Decrypt_Data(). Keep the behavior
-          # unchanged; add visible checkpoints and kernel/device-mapper diagnostics.
+          # test6j: add dm-default-key/F2FS checkpoints on top of the
+          # test6d instrumentation already applied by scripts/prepare-tree.sh.
           text = pm.read_text()
-          dm_old = "#ifdef USE_FSCRYPT\n\t\t\tif (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : \"\")) {\n\t\t\t\tstd::string crypto_blkdev = android::base::GetProperty(\"ro.crypto.fs_crypto_blkdev\", \"error\");\n\t\t\t\tDecrypt_Data->Decrypted_Block_Device = crypto_blkdev;\n\t\t\t\tLOGINFO(\"Successfully decrypted metadata encrypted data partition with new block device: '%s'\\n\", crypto_blkdev.c_str());\n#endif\n\t\t\t\tDecrypt_Data->Is_Decrypted = true; // Needed to make the mount function work correctly\n\t\t\t\tint retry_count = 10;\n\t\t\t\twhile (!Decrypt_Data->Mount(false) && --retry_count)\n\t\t\t\t\tusleep(500);\n\t\t\t\tif (Decrypt_Data->Mount(false)) {\n\t\t\t\t\tif (!Decrypt_Data->Decrypt_FBE_DE()) {\n\t\t\t\t\t\tLOGERR(\"Unable to decrypt FBE device\\n\");\n\t\t\t\t\t}\n\n\t\t\t\t} else {\n\t\t\t\t\tLOGINFO(\"Failed to mount data after metadata decrypt\\n\");\n\t\t\t\t}\n\t\t\t} else {\n\t\t\t\tLOGINFO(\"Unable to decrypt metadata encryption\\n\");\n\t\t\t}\n"
-          dm_new = "#ifdef USE_FSCRYPT\n\t\t\tgui_msg(\"b2q_metadata_map_start=[b2q] METADATA MAP START\");\n\t\t\tLOGINFO(\"b2q: metadata input actual='%s' fs='%s' mount_opts='%s' keydir='%s'\\n\",\n\t\t\t\tDecrypt_Data->Actual_Block_Device.c_str(), Decrypt_Data->Current_File_System.c_str(),\n\t\t\t\tDecrypt_Data->Mount_Options.c_str(), Decrypt_Data->Key_Directory.c_str());\n\t\t\tif (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : \"\")) {\n\t\t\t\tstd::string crypto_blkdev = android::base::GetProperty(\"ro.crypto.fs_crypto_blkdev\", \"error\");\n\t\t\t\tDecrypt_Data->Decrypted_Block_Device = crypto_blkdev;\n\t\t\t\tLOGINFO(\"Successfully decrypted metadata encrypted data partition with new block device: '%s'\\n\", crypto_blkdev.c_str());\n\t\t\t\tgui_msg(\"b2q_dm_default_key_ready=[b2q] DM DEFAULT KEY READY\");\n\t\t\t\tstd::string b2q_dm_diag;\n\t\t\t\tTWFunc::Exec_Cmd(\"echo '--- /dev/block/mapper ---'; ls -la /dev/block/mapper 2>&1 || true; echo '--- dm nodes ---'; ls -la /dev/block/dm-* 2>&1 || true; echo '--- dm sysfs ---'; for d in /sys/class/block/dm-*; do [ -e \\\"$d\\\" ] || continue; echo \\\"[$d]\\\"; cat \\\"$d/dm/name\\\" 2>/dev/null || true; cat \\\"$d/dm/uuid\\\" 2>/dev/null || true; done; echo '--- crypto blkdev ---'; getprop ro.crypto.fs_crypto_blkdev; echo '--- resolved ---'; readlink -f \\\"\" + crypto_blkdev + \"\\\" 2>/dev/null || true; echo '--- data mount ---'; grep ' /data ' /proc/mounts || true\", b2q_dm_diag, true);\n\t\t\t\tLOGINFO(\"b2q: dm-default-key diagnostics:\\n%s\\n\", b2q_dm_diag.c_str());\n#endif\n\t\t\t\tDecrypt_Data->Is_Decrypted = true; // Needed to make the mount function work correctly\n\t\t\t\tgui_msg(\"b2q_f2fs_mount_start=[b2q] F2FS MOUNT START\");\n\t\t\t\tint retry_count = 10;\n\t\t\t\twhile (!Decrypt_Data->Mount(false) && --retry_count)\n\t\t\t\t\tusleep(500);\n\t\t\t\tif (Decrypt_Data->Mount(false)) {\n\t\t\t\t\tgui_msg(\"b2q_f2fs_mount_ok=[b2q] F2FS MOUNT OK\");\n\t\t\t\t\tif (!Decrypt_Data->Decrypt_FBE_DE()) {\n\t\t\t\t\t\tLOGERR(\"Unable to decrypt FBE device\\n\");\n\t\t\t\t\t}\n\n\t\t\t\t} else {\n\t\t\t\t\tstd::string b2q_f2fs_diag;\n\t\t\t\t\tTWFunc::Exec_Cmd(\"echo '--- data block ---'; ls -la \\\"\" + Decrypt_Data->Decrypted_Block_Device + \"\\\" 2>&1 || true; echo '--- mounts ---'; grep ' /data ' /proc/mounts || true; echo '--- f2fs/dm dmesg ---'; dmesg | grep -Ei 'f2fs|dm-|device-mapper|fscrypt|metadata|userdata' | tail -n 160\", b2q_f2fs_diag, true);\n\t\t\t\t\tLOGINFO(\"b2q: F2FS mount failure diagnostics:\\n%s\\n\", b2q_f2fs_diag.c_str());\n\t\t\t\t\tgui_err(\"b2q_f2fs_mount_fail=[b2q] F2FS MOUNT FAIL\");\n\t\t\t\t\tLOGINFO(\"Failed to mount data after metadata decrypt\\n\");\n\t\t\t\t}\n\t\t\t} else {\n\t\t\t\tgui_err(\"b2q_metadata_map_fail=[b2q] METADATA MAP FAIL\");\n\t\t\t\tLOGINFO(\"Unable to decrypt metadata encryption\\n\");\n\t\t\t}\n"
-          if text.count(dm_old) != 1:
-              raise SystemExit(f'partitionmanager.cpp dm/f2fs anchor count={text.count(dm_old)}')
-          pm.write_text(text.replace(dm_old, dm_new, 1))
+
+          def pm_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'partitionmanager.cpp {label} anchor count={count}')
+              text = text.replace(old, new, 1)
+
+          pm_once(
+              '\t\t\tgui_msg("b2q_metadata_start=[b2q] METADATA START");\n',
+              '\t\t\tgui_msg("b2q_metadata_map_start=[b2q] METADATA MAP START");\n'
+              '\t\t\tLOGINFO("b2q: metadata input actual=\\\'%s\\\' fs=\\\'%s\\\' mount_opts=\\\'%s\\\' keydir=\\\'%s\\\'\\n", '
+              'Decrypt_Data->Actual_Block_Device.c_str(), Decrypt_Data->Current_File_System.c_str(), '
+              'Decrypt_Data->Mount_Options.c_str(), Decrypt_Data->Key_Directory.c_str());\n'
+              '\t\t\tgui_msg("b2q_metadata_start=[b2q] METADATA START");\n',
+              'metadata start')
+
+          pm_once(
+              '\t\t\t\tLOGINFO("Successfully decrypted metadata encrypted data partition with new block device: \'%s\'\\n", crypto_blkdev.c_str());\n',
+              '\t\t\t\tLOGINFO("Successfully decrypted metadata encrypted data partition with new block device: \'%s\'\\n", crypto_blkdev.c_str());\n'
+              '\t\t\t\tgui_msg("b2q_dm_default_key_ready=[b2q] DM DEFAULT KEY READY");\n'
+              '\t\t\t\tstd::string b2q_dm_diag;\n'
+              '\t\t\t\tTWFunc::Exec_Cmd("echo \'--- /dev/block/mapper ---\'; ls -la /dev/block/mapper 2>&1 || true; '
+              'echo \'--- dm nodes ---\'; ls -la /dev/block/dm-* 2>&1 || true; '
+              'echo \'--- dm sysfs ---\'; for d in /sys/class/block/dm-*; do [ -e \\\"$d\\\" ] || continue; '
+              'echo \\\"[$d]\\\"; cat \\\"$d/dm/name\\\" 2>/dev/null || true; cat \\\"$d/dm/uuid\\\" 2>/dev/null || true; done; '
+              'echo \'--- crypto blkdev ---\'; getprop ro.crypto.fs_crypto_blkdev; '
+              'echo \'--- resolved ---\'; readlink -f \\\"" + crypto_blkdev + "\\\" 2>/dev/null || true; '
+              'echo \'--- data mount ---\'; grep \' /data \' /proc/mounts || true", b2q_dm_diag, true);\n'
+              '\t\t\t\tLOGINFO("b2q: dm-default-key diagnostics:\\n%s\\n", b2q_dm_diag.c_str());\n',
+              'dm ready')
+
+          pm_once(
+              '\t\t\t\tgui_msg("b2q_data_mount_start=[b2q] DATA MOUNT START");\n',
+              '\t\t\t\tgui_msg("b2q_data_mount_start=[b2q] DATA MOUNT START");\n'
+              '\t\t\t\tgui_msg("b2q_f2fs_mount_start=[b2q] F2FS MOUNT START");\n',
+              'f2fs start')
+
+          pm_once(
+              '\t\t\t\t\tgui_msg("b2q_data_mount_ok=[b2q] DATA MOUNT OK");\n',
+              '\t\t\t\t\tgui_msg("b2q_data_mount_ok=[b2q] DATA MOUNT OK");\n'
+              '\t\t\t\t\tgui_msg("b2q_f2fs_mount_ok=[b2q] F2FS MOUNT OK");\n',
+              'f2fs success')
+
+          pm_once(
+              '\t\t\t\t} else {\n\t\t\t\t\tLOGINFO("Failed to mount data after metadata decrypt\\n");\n\t\t\t\t}\n',
+              '\t\t\t\t} else {\n'
+              '\t\t\t\t\tstd::string b2q_f2fs_diag;\n'
+              '\t\t\t\t\tTWFunc::Exec_Cmd("echo \'--- data block ---\'; ls -la \\\"" + Decrypt_Data->Decrypted_Block_Device + "\\\" 2>&1 || true; '
+              'echo \'--- mounts ---\'; grep \' /data \' /proc/mounts || true; '
+              'echo \'--- f2fs/dm dmesg ---\'; dmesg | grep -Ei \'f2fs|dm-|device-mapper|fscrypt|metadata|userdata\' | tail -n 160", b2q_f2fs_diag, true);\n'
+              '\t\t\t\t\tLOGINFO("b2q: F2FS mount failure diagnostics:\\n%s\\n", b2q_f2fs_diag.c_str());\n'
+              '\t\t\t\t\tgui_err("b2q_f2fs_mount_fail=[b2q] F2FS MOUNT FAIL");\n'
+              '\t\t\t\t\tLOGINFO("Failed to mount data after metadata decrypt\\n");\n'
+              '\t\t\t\t}\n',
+              'f2fs failure')
+
+          pm_once(
+              '\t\t\t} else {\n\t\t\t\tLOGINFO("Unable to decrypt metadata encryption\\n");\n\t\t\t}\n',
+              '\t\t\t} else {\n'
+              '\t\t\t\tgui_err("b2q_metadata_map_fail=[b2q] METADATA MAP FAIL");\n'
+              '\t\t\t\tLOGINFO("Unable to decrypt metadata encryption\\n");\n'
+              '\t\t\t}\n',
+              'metadata failure')
+
+          pm.write_text(text)
 
           # 2) Add a dedicated threaded GUI action that prepares metadata/FBE only.
           objects = root / 'gui/objects.hpp'
