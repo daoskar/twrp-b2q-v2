@@ -1,9 +1,9 @@
-name: Build TWRP b2q stock-keymaster test6i
+name: Build TWRP b2q dm-default-key/f2fs test6j
 
 on:
   push:
     branches:
-      - test6-async-metadata
+      - test6j-dm-f2fs
   workflow_dispatch:
 
 permissions:
@@ -49,10 +49,10 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6i device tree
+      - name: Checkout test6j device tree
         uses: actions/checkout@v4
         with:
-          ref: test6-async-metadata
+          ref: test6j-dm-f2fs
           path: twrp/device/samsung/b2q
 
       - name: Prepare stable baseline and manual metadata action
@@ -183,6 +183,73 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit(f'partitionmanager.cpp expected 1 startup decrypt block, got {text.count(old)}')
           pm.write_text(text.replace(old, new, 1))
+
+          # test6j: instrument the exact metadata mapping -> dm-default-key -> F2FS
+          # path inside TWPartitionManager::Decrypt_Data(). Keep the behavior
+          # unchanged; add visible checkpoints and kernel/device-mapper diagnostics.
+          text = pm.read_text()
+          dm_old = '''#ifdef USE_FSCRYPT
+			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
+				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
+				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
+				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\\n", crypto_blkdev.c_str());
+#endif
+				Decrypt_Data->Is_Decrypted = true; // Needed to make the mount function work correctly
+				int retry_count = 10;
+				while (!Decrypt_Data->Mount(false) && --retry_count)
+					usleep(500);
+				if (Decrypt_Data->Mount(false)) {
+					if (!Decrypt_Data->Decrypt_FBE_DE()) {
+						LOGERR("Unable to decrypt FBE device\\n");
+					}
+
+				} else {
+					LOGINFO("Failed to mount data after metadata decrypt\\n");
+				}
+			} else {
+				LOGINFO("Unable to decrypt metadata encryption\\n");
+			}
+'''
+          dm_new = '''#ifdef USE_FSCRYPT
+			gui_msg("b2q_metadata_map_start=[b2q] METADATA MAP START");
+			LOGINFO("b2q: metadata input actual='%s' fs='%s' mount_opts='%s' keydir='%s'\\n",
+				Decrypt_Data->Actual_Block_Device.c_str(), Decrypt_Data->Current_File_System.c_str(),
+				Decrypt_Data->Mount_Options.c_str(), Decrypt_Data->Key_Directory.c_str());
+			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
+				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
+				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
+				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\\n", crypto_blkdev.c_str());
+				gui_msg("b2q_dm_default_key_ready=[b2q] DM DEFAULT KEY READY");
+				std::string b2q_dm_diag;
+				TWFunc::Exec_Cmd("echo '--- /dev/block/mapper ---'; ls -la /dev/block/mapper 2>&1 || true; echo '--- dm nodes ---'; ls -la /dev/block/dm-* 2>&1 || true; echo '--- dm sysfs ---'; for d in /sys/class/block/dm-*; do [ -e \"$d\" ] || continue; echo \"[$d]\"; cat \"$d/dm/name\" 2>/dev/null || true; cat \"$d/dm/uuid\" 2>/dev/null || true; done; echo '--- crypto blkdev ---'; getprop ro.crypto.fs_crypto_blkdev; echo '--- resolved ---'; readlink -f \"" + crypto_blkdev + "\" 2>/dev/null || true; echo '--- data mount ---'; grep ' /data ' /proc/mounts || true", b2q_dm_diag, true);
+				LOGINFO("b2q: dm-default-key diagnostics:\\n%s\\n", b2q_dm_diag.c_str());
+#endif
+				Decrypt_Data->Is_Decrypted = true; // Needed to make the mount function work correctly
+				gui_msg("b2q_f2fs_mount_start=[b2q] F2FS MOUNT START");
+				int retry_count = 10;
+				while (!Decrypt_Data->Mount(false) && --retry_count)
+					usleep(500);
+				if (Decrypt_Data->Mount(false)) {
+					gui_msg("b2q_f2fs_mount_ok=[b2q] F2FS MOUNT OK");
+					if (!Decrypt_Data->Decrypt_FBE_DE()) {
+						LOGERR("Unable to decrypt FBE device\\n");
+					}
+
+				} else {
+					std::string b2q_f2fs_diag;
+					TWFunc::Exec_Cmd("echo '--- data block ---'; ls -la \"" + Decrypt_Data->Decrypted_Block_Device + "\" 2>&1 || true; echo '--- mounts ---'; grep ' /data ' /proc/mounts || true; echo '--- f2fs/dm dmesg ---'; dmesg | grep -Ei 'f2fs|dm-|device-mapper|fscrypt|metadata|userdata' | tail -n 160", b2q_f2fs_diag, true);
+					LOGINFO("b2q: F2FS mount failure diagnostics:\\n%s\\n", b2q_f2fs_diag.c_str());
+					gui_err("b2q_f2fs_mount_fail=[b2q] F2FS MOUNT FAIL");
+					LOGINFO("Failed to mount data after metadata decrypt\\n");
+				}
+			} else {
+				gui_err("b2q_metadata_map_fail=[b2q] METADATA MAP FAIL");
+				LOGINFO("Unable to decrypt metadata encryption\\n");
+			}
+'''
+          if text.count(dm_old) != 1:
+              raise SystemExit(f'partitionmanager.cpp dm/f2fs anchor count={text.count(dm_old)}')
+          pm.write_text(text.replace(dm_old, dm_new, 1))
 
           # 2) Add a dedicated threaded GUI action that prepares metadata/FBE only.
           objects = root / 'gui/objects.hpp'
@@ -346,7 +413,12 @@ jobs:
           \t\tTWPartition* data = PartitionManager.Find_Partition_By_Path("/data");
           \t\tif (data && data->Is_Decrypted) {
           \t\t\tLOGINFO("b2q: metadata mapping is ready, block device: '%s'\\n", data->Decrypted_Block_Device.c_str());
-          \t\t\top_status = 0;
+          \t\t\tif (data->Is_Mounted()) {
+          \t\t\t\tgui_msg("b2q_data_mount_confirmed=[b2q] DATA MOUNT CONFIRMED");
+          \t\t\t\top_status = 0;
+          \t\t\t} else {
+          \t\t\t\tgui_err("b2q_data_still_unmounted=[b2q] DATA STILL UNMOUNTED");
+          \t\t\t}
           \t\t} else {
           \t\t\tLOGERR("b2q: metadata mapping was not prepared\\n");
           \t\t}
@@ -412,6 +484,13 @@ jobs:
           grep -Fq 'AServiceManager_checkService' "$VOLD/Keymaster.cpp"
           ! grep -Fq 'AServiceManager_waitForService(keystore2_service_name)' "$VOLD/Keymaster.cpp"
           grep -Fq 'metadata mapping is ready' gui/action.cpp
+          grep -Fq 'DATA MOUNT CONFIRMED' gui/action.cpp
+          grep -Fq 'METADATA MAP START' partitionmanager.cpp
+          grep -Fq 'DM DEFAULT KEY READY' partitionmanager.cpp
+          grep -Fq 'F2FS MOUNT START' partitionmanager.cpp
+          grep -Fq 'F2FS MOUNT FAIL' partitionmanager.cpp
+          grep -Fq 'dm-default-key diagnostics' partitionmanager.cpp
+          grep -Fq 'F2FS mount failure diagnostics' partitionmanager.cpp
           grep -Fq 'int preparedecrypt(std::string arg);' gui/objects.hpp
           grep -Fq '<text>Prepare Data</text>' gui/theme/common/portrait.xml
           grep -Fq '<action function="set">tw_action=preparedecrypt</action>' gui/theme/common/portrait.xml
@@ -424,7 +503,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6i stock SM8350 firmware + DAK + Keymaster runtime patch verified'
+          echo '[b2q] test6j dm-default-key + F2FS diagnostics patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -452,10 +531,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6i artifact
+      - name: Upload test6j artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-stock-keymaster-test6i-${{ github.sha }}
+          name: TWRP-b2q-dm-f2fs-test6j-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
