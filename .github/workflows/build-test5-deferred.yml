@@ -1,9 +1,9 @@
-name: Build TWRP b2q dm-default-key/f2fs test6j
+name: Build TWRP b2q firmware-layout test6k
 
 on:
   push:
     branches:
-      - test6j-dm-f2fs
+      - test6k-firmware-probe
   workflow_dispatch:
 
 permissions:
@@ -49,10 +49,10 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6j device tree
+      - name: Checkout test6k device tree
         uses: actions/checkout@v4
         with:
-          ref: test6j-dm-f2fs
+          ref: test6k-firmware-probe
           path: twrp/device/samsung/b2q
 
       - name: Prepare stable baseline and manual metadata action
@@ -309,23 +309,17 @@ jobs:
           \t\t}
           \t\tgui_msg("b2q_efs_bind_ok=[b2q] EFS BIND OK");
 
-          \t\tgui_msg("b2q_firmware_start=[b2q] FIRMWARE MOUNT START");
-          \t\tif (!TWFunc::Path_Exists("/vendor/firmware_mnt")) {
-          \t\t\tgui_err("b2q_firmware_dir_fail=[b2q] FIRMWARE DIR FAIL");
+          \t\tgui_msg("b2q_firmware_probe_start=[b2q] FIRMWARE PROBE START");
+          \t\tstd::string fw_diag;
+          \t\tint fw_status = TWFunc::Exec_Cmd("/system/bin/sh /system/bin/b2q-firmware-probe.sh", fw_diag, true);
+          \t\tLOGINFO("b2q: firmware probe diagnostics:\\n%s\\n", fw_diag.c_str());
+          \t\tif (fw_status != 0) {
+          \t\t\tLOGINFO("b2q: firmware probe exit status: %d\\n", fw_status);
+          \t\t\tgui_err("b2q_firmware_probe_fail=[b2q] FIRMWARE PROBE FAIL");
           \t\t\toperation_end(1);
           \t\t\treturn 0;
           \t\t}
-          \t\tif (TWFunc::Exec_Cmd("grep -q ' /vendor/firmware_mnt ' /proc/mounts || mount -t vfat -o ro,shortname=lower,uid=0,gid=1000,dmask=227,fmask=337 /dev/block/bootdevice/by-name/apnhlos /vendor/firmware_mnt", false) != 0) {
-          \t\t\tgui_err("b2q_firmware_mount_fail=[b2q] FIRMWARE MOUNT FAIL");
-          \t\t\toperation_end(1);
-          \t\t\treturn 0;
-          \t\t}
-          \t\tif (!TWFunc::Path_Exists("/vendor/firmware_mnt/image")) {
-          \t\t\tgui_err("b2q_firmware_image_fail=[b2q] FIRMWARE IMAGE FAIL");
-          \t\t\toperation_end(1);
-          \t\t\treturn 0;
-          \t\t}
-          \t\tgui_msg("b2q_firmware_ok=[b2q] FIRMWARE MOUNT OK");
+          \t\tgui_msg("b2q_firmware_ok=[b2q] FIRMWARE READY");
 
           \t\tgui_msg("b2q_dak_start=[b2q] DAK PREP START");
           \t\tif (TWFunc::Exec_Cmd("mkdir -p /mnt/vendor/efs/DAK && chown 1000:1000 /mnt/vendor/efs/DAK && chmod 0775 /mnt/vendor/efs/DAK && if [ -e /mnt/vendor/efs/DAK/gakkeybox ]; then chown 1000:1000 /mnt/vendor/efs/DAK/gakkeybox; chmod 0644 /mnt/vendor/efs/DAK/gakkeybox; fi && restorecon -R /mnt/vendor/efs/DAK >/dev/null 2>&1 || true", false) != 0) {
@@ -474,7 +468,11 @@ jobs:
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
           grep -Fq 'QSEECOMD RUNNING' gui/action.cpp
-          grep -Fq 'FIRMWARE MOUNT OK' gui/action.cpp
+          test -f "$DEVICE/recovery/root/system/bin/b2q-firmware-probe.sh"
+          bash -n "$DEVICE/recovery/root/system/bin/b2q-firmware-probe.sh"
+          grep -Fq 'FIRMWARE PROBE START' gui/action.cpp
+          grep -Fq 'FIRMWARE READY' gui/action.cpp
+          grep -Fq 'firmware probe diagnostics' gui/action.cpp
           grep -Fq 'DAK PREP OK' gui/action.cpp
           grep -Fq 'chown 1000:1000 /data/vendor /data/vendor/keymaster' gui/action.cpp
           grep -Fq 'KEYMASTER HAL READY' gui/action.cpp
@@ -506,7 +504,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6j dm-default-key + F2FS diagnostics patch verified'
+          echo '[b2q] test6k firmware probe + dm-default-key/F2FS diagnostics patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -534,10 +532,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6j artifact
+      - name: Upload test6k artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-dm-f2fs-test6j-${{ github.sha }}
+          name: TWRP-b2q-firmware-probe-test6k-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
