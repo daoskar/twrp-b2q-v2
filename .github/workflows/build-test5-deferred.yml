@@ -1,9 +1,9 @@
-name: Build TWRP b2q qsee-after-fw test6l
+name: Build TWRP b2q security-stack test6m
 
 on:
   push:
     branches:
-      - test6l-qsee-after-fw-probe
+      - test6m-security-stack
   workflow_dispatch:
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6l device tree
+      - name: Checkout test6m device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -90,6 +90,35 @@ jobs:
               disabled
               seclabel u:r:recovery:s0
 
+          # b2q test6m: stock SM8350 Samsung security-stack helpers.
+          service vendor.spdaemon /vendor/bin/spdaemon
+              override
+              class core
+              user system
+              group system
+              setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
+              disabled
+              seclabel u:r:recovery:s0
+
+          service vendor.sec_nvm /vendor/bin/sec_nvm
+              override
+              class core
+              user system
+              group system
+              setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
+              disabled
+              seclabel u:r:recovery:s0
+
+          service vendor.fkeymaster-default /vendor/bin/vendor.samsung.hardware.security.fkeymaster-service
+              override
+              interface aidl vendor.samsung.hardware.security.fkeymaster.ISehFkeymaster/default
+              class early_hal
+              user system
+              group system
+              setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
+              disabled
+              seclabel u:r:recovery:s0
+
           # b2q test6i: match the stock q2q Keymaster runtime identity.
           service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service
               override
@@ -102,7 +131,10 @@ jobs:
               seclabel u:r:recovery:s0
           EOF
           grep -Fq 'service vendor.qseecomd /vendor/bin/qseecomd' recovery/root/init.recovery.qcom.rc
-          test "$(grep -Fc '    override' recovery/root/init.recovery.qcom.rc)" -eq 2
+          test "$(grep -Fc '    override' recovery/root/init.recovery.qcom.rc)" -eq 5
+          grep -Fq 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc
+          grep -Fq 'service vendor.sec_nvm /vendor/bin/sec_nvm' recovery/root/init.recovery.qcom.rc
+          grep -Fq 'service vendor.fkeymaster-default /vendor/bin/vendor.samsung.hardware.security.fkeymaster-service' recovery/root/init.recovery.qcom.rc
           grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
           grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
 
@@ -361,6 +393,48 @@ jobs:
           \t\tgui_msg("b2q_qsee_ok=[b2q] QSEECOMD RUNNING");
           \t\tusleep(500000);
 
+          \t\tgui_print("[b2q] SECURITY STACK PREP START\\n");
+          \t\tif (PartitionManager.Mount_By_Path("/persist", false)) {
+          \t\t\tTWFunc::Recursive_Mkdir("/mnt/vendor/persist");
+          \t\t\tif (TWFunc::Exec_Cmd("mountpoint -q /mnt/vendor/persist || mount -o bind /persist /mnt/vendor/persist", false) == 0) {
+          \t\t\t\tgui_print("[b2q] PERSIST RO BIND OK\\n");
+          \t\t\t} else {
+          \t\t\t\tgui_print_color("error", "[b2q] PERSIST BIND FAIL\\n");
+          \t\t\t}
+          \t\t} else {
+          \t\t\tgui_print_color("error", "[b2q] PERSIST RO MOUNT FAIL\\n");
+          \t\t}
+
+          \t\tstd::string sec_layout;
+          \t\tTWFunc::Exec_Cmd("echo '--- persist ---'; mount | grep -E ' /persist | /mnt/vendor/persist ' || true; ls -ld /persist /persist/secnvm /persist/iar_db /mnt/vendor/persist /mnt/vendor/persist/secnvm /mnt/vendor/persist/iar_db 2>&1 || true; echo '--- security binaries ---'; ls -l /vendor/bin/spdaemon /vendor/bin/sec_nvm /vendor/bin/vendor.samsung.hardware.security.fkeymaster-service 2>&1 || true; echo '--- security devnodes ---'; ls -l /dev/sp_* /dev/sec_nvm_* /dev/cryptoapp /dev/smcinvoke /dev/qseecom 2>&1 || true", sec_layout, true);
+          \t\tLOGINFO("b2q: security stack layout:\\n%s\\n", sec_layout.c_str());
+
+          \t\tif (TWFunc::Path_Exists("/vendor/bin/spdaemon")) {
+          \t\t\tandroid::base::SetProperty("ctl.start", "vendor.spdaemon");
+          \t\t\tfor (int i = 0; i < 30 && android::base::GetProperty("init.svc.vendor.spdaemon", "") != "running"; ++i)
+          \t\t\t\tusleep(100000);
+          \t\t\tgui_print("[b2q] SPDAEMON state=%s\\n", android::base::GetProperty("init.svc.vendor.spdaemon", "missing").c_str());
+          \t\t}
+
+          \t\tif (TWFunc::Path_Exists("/vendor/bin/sec_nvm")) {
+          \t\t\tandroid::base::SetProperty("ctl.start", "vendor.sec_nvm");
+          \t\t\tfor (int i = 0; i < 30 && android::base::GetProperty("init.svc.vendor.sec_nvm", "") != "running"; ++i)
+          \t\t\t\tusleep(100000);
+          \t\t\tgui_print("[b2q] SEC_NVM state=%s\\n", android::base::GetProperty("init.svc.vendor.sec_nvm", "missing").c_str());
+          \t\t}
+
+          \t\tif (TWFunc::Path_Exists("/vendor/bin/vendor.samsung.hardware.security.fkeymaster-service")) {
+          \t\t\tandroid::base::SetProperty("ctl.start", "vendor.fkeymaster-default");
+          \t\t\tfor (int i = 0; i < 30 && android::base::GetProperty("init.svc.vendor.fkeymaster-default", "") != "running"; ++i)
+          \t\t\t\tusleep(100000);
+          \t\t\tgui_print("[b2q] FKEYMASTER state=%s\\n", android::base::GetProperty("init.svc.vendor.fkeymaster-default", "missing").c_str());
+          \t\t}
+
+          \t\tstd::string sec_diag;
+          \t\tTWFunc::Exec_Cmd("ps -A 2>/dev/null | grep -Ei 'qsee|keymaster|fkeymaster|spdaemon|sec_nvm' || true; echo '--- props ---'; getprop | grep -Ei 'init.svc.(vendor.qseecomd|vendor.keymaster-4-0|vendor.spdaemon|vendor.sec_nvm|vendor.fkeymaster-default)' || true; echo '--- recent security logs ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'keymaster|fkeymaster|qsee|spdaemon|sec_nvm|spcom|smcinvoke|secure processor|tee' | tail -n 120", sec_diag, true);
+          \t\tLOGINFO("b2q: pre-keymaster security diagnostics:\\n%s\\n", sec_diag.c_str());
+          \t\tgui_print("[b2q] SECURITY STACK PREP DONE\\n");
+
           \t\tgui_msg("b2q_keymaster_dir_start=[b2q] KEYMASTER DIR START");
           \t\tif (!TWFunc::Recursive_Mkdir("/data/vendor/keymaster")) {
           \t\t\tgui_err("b2q_keymaster_dir_fail=[b2q] KEYMASTER DIR FAIL");
@@ -395,10 +469,15 @@ jobs:
           \t\t}
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
-          \t\t\tTWFunc::Exec_Cmd("logcat -d -v brief 2>/dev/null | grep -Ei 'keymaster|qsee|keystore|tee|drmrpc' | tail -n 80", km_diag, true);
-          \t\t\tLOGINFO("b2q: keymaster HAL diagnostic log:\\n%s\\n", km_diag.c_str());
+          \t\t\tTWFunc::Exec_Cmd("echo '--- service states ---'; getprop | grep -Ei 'init.svc.(vendor.qseecomd|vendor.keymaster-4-0|vendor.spdaemon|vendor.sec_nvm|vendor.fkeymaster-default)' || true; echo '--- processes ---'; ps -A 2>/dev/null | grep -Ei 'keymaster|fkeymaster|qsee|spdaemon|sec_nvm' || true; echo '--- devnodes ---'; ls -l /dev/sp_* /dev/sec_nvm_* /dev/cryptoapp /dev/smcinvoke /dev/qseecom 2>&1 || true; echo '--- logcat ---'; logcat -b all -d -v threadtime 2>/dev/null | grep -Ei 'keymaster|fkeymaster|qsee|spdaemon|sec_nvm|spcom|smcinvoke|tee|hidl|hwservicemanager' | tail -n 240; echo '--- dmesg ---'; dmesg | grep -Ei 'keymaster|qsee|spdaemon|sec_nvm|spcom|smcinvoke|tz|tee|secure' | tail -n 160", km_diag, true);
+          \t\t\tLOGINFO("b2q: keymaster HAL extended diagnostics:\\n%s\\n", km_diag.c_str());
           \t\t\tLOGINFO("b2q: keymaster service state: %s\\n", android::base::GetProperty("init.svc.vendor.keymaster-4-0", "").c_str());
-          \t\t\tgui_err("b2q_keymaster_hal_fail=[b2q] KEYMASTER HAL FAIL");
+          \t\t\tgui_print_color("error", "[b2q] KEYMASTER HAL FAIL\\n");
+          \t\t\tgui_print("[b2q] KM=%s SP=%s NVM=%s FK=%s\\n",
+          \t\t\t\tandroid::base::GetProperty("init.svc.vendor.keymaster-4-0", "?").c_str(),
+          \t\t\t\tandroid::base::GetProperty("init.svc.vendor.spdaemon", "?").c_str(),
+          \t\t\t\tandroid::base::GetProperty("init.svc.vendor.sec_nvm", "?").c_str(),
+          \t\t\t\tandroid::base::GetProperty("init.svc.vendor.fkeymaster-default", "?").c_str());
           \t\t\toperation_end(1);
           \t\t\treturn 0;
           \t\t}
@@ -509,6 +588,12 @@ jobs:
           grep -Fq 'gui_print("[b2q] METADATA MAP START' partitionmanager.cpp
           grep -Fq 'DAK PREP OK' gui/action.cpp
           grep -Fq 'chown 1000:1000 /data/vendor /data/vendor/keymaster' gui/action.cpp
+          grep -Fq 'SECURITY STACK PREP START' gui/action.cpp
+          grep -Fq 'PERSIST RO BIND OK' gui/action.cpp
+          grep -Fq 'SPDAEMON state=' gui/action.cpp
+          grep -Fq 'SEC_NVM state=' gui/action.cpp
+          grep -Fq 'FKEYMASTER state=' gui/action.cpp
+          grep -Fq 'keymaster HAL extended diagnostics' gui/action.cpp
           grep -Fq 'KEYMASTER HAL READY' gui/action.cpp
           grep -Fq '#include <android/hardware/keymaster/4.0/IKeymasterDevice.h>' gui/action.cpp
           grep -Fq 'android.hardware.keymaster@4.0' Android.mk
@@ -538,7 +623,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6l firmware-softfail + stock QSEE/Keymaster path verified'
+          echo '[b2q] test6m stock Samsung security-stack + Keymaster diagnostics verified'
 
       - name: Build recovery.img
         shell: bash
@@ -566,10 +651,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6l artifact
+      - name: Upload test6m artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-qsee-after-fw-test6l-${{ github.sha }}
+          name: TWRP-b2q-security-stack-test6m-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
