@@ -1,0 +1,107 @@
+name: Publish verified TWRP b2q test6j
+
+on:
+  push:
+    branches:
+      - test6j-dm-f2fs
+    paths:
+      - '.github/workflows/publish-test6j.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '35437704336'
+      SOURCE_ARTIFACT: 'TWRP-b2q-dm-f2fs-test6j-a7212184c6923940cb12674c29f3af056a46aae4'
+      SOURCE_SHA: 'a7212184c6923940cb12674c29f3af056a46aae4'
+      RECOVERY_SHA256: '4a98f7816369749b806ca5e49cb8a6869ea65864a8be962f2d806a69502f5794'
+      RECOVERY_SIZE: '100663296'
+      TAG: 'v0.1.0-test6j'
+
+    steps:
+      - name: Download verified build artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$SOURCE_ARTIFACT" \
+            --dir dist
+          test -f dist/recovery.img
+          test -f dist/recovery.img.sha256
+
+      - name: Verify recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          test "$(stat -c '%s' recovery.img)" = "$RECOVERY_SIZE"
+          echo "$RECOVERY_SHA256  recovery.img" | sha256sum -c -
+          grep -Fq "$RECOVERY_SHA256" recovery.img.sha256
+
+      - name: Build Odin packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          BASE="TWRP-b2q-test6j-a7212184"
+          tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
+          cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
+          md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
+          sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
+          tar -tf "$BASE-Odin.tar"
+          tail -c 64 "$BASE-Odin.tar.md5" || true
+
+      - name: Publish prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          ## TWRP b2q v2 — test6j
+
+          Samsung Galaxy Z Flip3 **SM-F711B / b2q**.
+
+          Built from commit `a7212184c6923940cb12674c29f3af056a46aae4`.
+
+          test6j keeps the working test6i Keymaster/QSEE/keystore2 preparation path and adds focused diagnostics inside `TWPartitionManager::Decrypt_Data()` for the next stage:
+
+          - metadata mapping entry and return
+          - dm-default-key creation
+          - mapper/sysfs diagnostics
+          - F2FS mount start/success/failure
+          - filtered kernel diagnostics on mount failure
+          - success only after `/data` is actually mounted
+
+          Expected visible checkpoints after **Prepare Data** include:
+          `METADATA MAP START` → `DM DEFAULT KEY READY` → `F2FS MOUNT START` → `F2FS MOUNT OK` or `F2FS MOUNT FAIL`.
+
+          Verified GitHub Actions build #25:
+          - recovery image size: **100663296 bytes (96 MiB)**
+          - recovery SHA-256: `4a98f7816369749b806ca5e49cb8a6869ea65864a8be962f2d806a69502f5794`
+          - build, image verification and artifact upload all passed
+
+          **Testing:** use **Prepare Data**. Do not manually mount `/data` before the test and do not Format Data.
+          EOF
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title 'TWRP b2q v2 — test6j (a7212184)' \
+            --prerelease \
+            --notes-file /tmp/release-notes.md \
+            dist/TWRP-b2q-test6j-a7212184-Odin.tar.md5 \
+            dist/TWRP-b2q-test6j-a7212184-Odin.tar \
+            dist/recovery.img \
+            dist/recovery.img.sha256 \
+            dist/SHA256SUMS.txt
