@@ -52,7 +52,7 @@ jobs:
       - name: Checkout test6l device tree
         uses: actions/checkout@v4
         with:
-          ref: test6l-qsee-after-fw-probe
+          ref: ${{ github.sha }}
           path: twrp/device/samsung/b2q
 
       - name: Prepare stable baseline and manual metadata action
