@@ -163,9 +163,11 @@ jobs:
               'fstab lookup')
 
           md_once(
-              '    CryptoOptions options;\n',
+              '    CryptoOptions options;\n'
+              '    if (options_format_version == 1) {\n',
               '    android::base::SetProperty("twrp.b2q.md_stage", "options");\n'
-              '    CryptoOptions options;\n',
+              '    CryptoOptions options;\n'
+              '    if (options_format_version == 1) {\n',
               'options')
 
           md_once(
@@ -268,7 +270,8 @@ jobs:
           ks_once(
               '    if (auth.usesKeymaster()) {\n'
               '        Keymaster keymaster;\n'
-              '        if (!keymaster) return false;\n',
+              '        if (!keymaster) return false;\n'
+              '        km::AuthorizationSet keyParams = beginParams(appId);\n',
               '    if (auth.usesKeymaster()) {\n'
               '        android::base::SetProperty("twrp.b2q.key_stage", "keymaster_ctor");\n'
               '        Keymaster keymaster;\n'
@@ -278,7 +281,8 @@ jobs:
               '            return false;\n'
               '        }\n'
               '        android::base::SetProperty("twrp.b2q.key_stage", "keymaster_ready");\n'
-              '        LOG(INFO) << "[b2q-key] KEYMASTER CTOR OK";\n',
+              '        LOG(INFO) << "[b2q-key] KEYMASTER CTOR OK";\n'
+              '        km::AuthorizationSet keyParams = beginParams(appId);\n',
               'keymaster ctor')
 
           ks_once(
