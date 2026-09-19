@@ -46,6 +46,58 @@ jobs:
           echo "$RECOVERY_SHA256  recovery.img" | sha256sum -c -
           grep -Fq "$RECOVERY_SHA256" recovery.img.sha256
 
+      - name: Verify firmware probe is inside recovery ramdisk
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+
+          img = Path("dist/recovery.img").read_bytes()
+          if img[:8] != b"ANDROID!":
+              raise SystemExit("not an Android boot image")
+
+          kernel_size = struct.unpack_from("<I", img, 8)[0]
+          ramdisk_size = struct.unpack_from("<I", img, 16)[0]
+          page_size = struct.unpack_from("<I", img, 36)[0]
+          header_version = struct.unpack_from("<I", img, 40)[0]
+
+          if page_size <= 0:
+              raise SystemExit(f"invalid page size: {page_size}")
+          if header_version != 2:
+              raise SystemExit(f"unexpected boot header version: {header_version}")
+
+          align = lambda n: (n + page_size - 1) // page_size * page_size
+          ramdisk_off = page_size + align(kernel_size)
+          ramdisk = img[ramdisk_off:ramdisk_off + ramdisk_size]
+          if len(ramdisk) != ramdisk_size:
+              raise SystemExit("truncated ramdisk")
+
+          Path("/tmp/b2q-ramdisk.bin").write_bytes(ramdisk)
+          print(f"boot header v{header_version}, page={page_size}, kernel={kernel_size}, ramdisk={ramdisk_size}, offset={ramdisk_off}")
+          print("ramdisk magic:", ramdisk[:8].hex())
+          PY
+
+          MAGIC="$(xxd -p -l 4 /tmp/b2q-ramdisk.bin)"
+          case "$MAGIC" in
+            1f8b*)
+              gzip -dc /tmp/b2q-ramdisk.bin > /tmp/b2q-ramdisk.cpio
+              ;;
+            02214c18|04224d18)
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq lz4
+              lz4 -dc /tmp/b2q-ramdisk.bin > /tmp/b2q-ramdisk.cpio
+              ;;
+            *)
+              cp /tmp/b2q-ramdisk.bin /tmp/b2q-ramdisk.cpio
+              ;;
+          esac
+
+          grep -aFq 'b2q-firmware-probe.sh' /tmp/b2q-ramdisk.cpio
+          grep -aFq 'no usable /vendor/firmware_mnt/image layout found' /tmp/b2q-ramdisk.cpio
+          echo '[b2q] firmware probe confirmed inside final recovery ramdisk'
+
       - name: Build Odin packages
         shell: bash
         run: |
