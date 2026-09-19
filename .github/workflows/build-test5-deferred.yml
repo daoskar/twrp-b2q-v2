@@ -1,9 +1,9 @@
-name: Build TWRP b2q qsee-after-fw test6l
+name: Build TWRP b2q SPU keymaster test6m
 
 on:
   push:
     branches:
-      - test6l-qsee-after-fw-probe
+      - test6m-spu-keymaster
   workflow_dispatch:
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6l device tree
+      - name: Checkout test6m device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -100,10 +100,32 @@ jobs:
               setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
               disabled
               seclabel u:r:recovery:s0
+
+          # b2q test6m: Samsung SM8350 SPU/NVM services required by
+          # libskeymaster4device before IKeymasterDevice/default is exposed.
+          service vendor.spdaemon /vendor/bin/spdaemon
+              override
+              class core
+              user system
+              group system
+              setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
+              disabled
+              seclabel u:r:recovery:s0
+
+          service vendor.sec_nvm /vendor/bin/sec_nvm
+              override
+              class core
+              user system
+              group system
+              setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
+              disabled
+              seclabel u:r:recovery:s0
           EOF
           grep -Fq 'service vendor.qseecomd /vendor/bin/qseecomd' recovery/root/init.recovery.qcom.rc
-          test "$(grep -Fc '    override' recovery/root/init.recovery.qcom.rc)" -eq 2
+          test "$(grep -Fc '    override' recovery/root/init.recovery.qcom.rc)" -eq 4
           grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
+          grep -Fq 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc
+          grep -Fq 'service vendor.sec_nvm /vendor/bin/sec_nvm' recovery/root/init.recovery.qcom.rc
           grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
 
           python3 - "$RECOVERY" "$VOLD" <<'PY'
@@ -341,6 +363,49 @@ jobs:
           \t\t}
           \t\tgui_msg("b2q_dak_ok=[b2q] DAK PREP OK");
 
+          \t\tgui_print("[b2q] SPU PREP START\\n");
+          \t\tbool persist_ready = PartitionManager.Mount_By_Path("/persist", false);
+          \t\tif (persist_ready) {
+          \t\t\tTWFunc::Recursive_Mkdir("/mnt/vendor/persist");
+          \t\t\tTWFunc::Exec_Cmd("mountpoint -q /mnt/vendor/persist || mount -o bind /persist /mnt/vendor/persist", false);
+          \t\t\tgui_print("[b2q] PERSIST RO READY\\n");
+          \t\t} else {
+          \t\t\tgui_print_color("error", "[b2q] PERSIST RO MOUNT FAIL - CONTINUE\\n");
+          \t\t}
+
+          \t\tstd::string spu_nodes_diag;
+          \t\tTWFunc::Exec_Cmd("for n in /dev/sp_nvm /dev/sp_ssr /dev/sp_keymaster /dev/sp_keymaster_ssr /dev/spdaemon_ssr /dev/spu_hal_ssr /dev/cryptoapp /dev/spss_utils /dev/sec_nvm_*; do [ -e \\\"$n\\\" ] || continue; chown 1000:1000 \\\"$n\\\" 2>/dev/null || true; chmod 0660 \\\"$n\\\" 2>/dev/null || true; done; echo '--- SPU nodes ---'; ls -la /dev/sp* /dev/sec_nvm_* /dev/cryptoapp /dev/spss_utils 2>&1 | head -n 80; echo '--- persist ---'; grep ' /persist ' /proc/mounts || true; grep ' /mnt/vendor/persist ' /proc/mounts || true; ls -ld /mnt/vendor/persist /mnt/vendor/persist/iar_db /mnt/vendor/persist/secnvm 2>&1 || true", spu_nodes_diag, true);
+          \t\tLOGINFO("b2q: SPU prep diagnostics:\\n%s\\n", spu_nodes_diag.c_str());
+
+          \t\tif (!TWFunc::Path_Exists("/vendor/bin/spdaemon") || !TWFunc::Path_Exists("/vendor/bin/sec_nvm")) {
+          \t\t\tgui_print_color("error", "[b2q] SPU BINARIES MISSING\\n");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+
+          \t\tgui_print("[b2q] SPDAEMON + SEC_NVM START\\n");
+          \t\tandroid::base::SetProperty("ctl.start", "vendor.spdaemon");
+          \t\tandroid::base::SetProperty("ctl.start", "vendor.sec_nvm");
+          \t\tfor (int i = 0; i < 100; ++i) {
+          \t\t\tconst std::string spd = android::base::GetProperty("init.svc.vendor.spdaemon", "");
+          \t\t\tconst std::string snv = android::base::GetProperty("init.svc.vendor.sec_nvm", "");
+          \t\t\tif (spd == "running" && snv == "running")
+          \t\t\t\tbreak;
+          \t\t\tusleep(100000);
+          \t\t}
+          \t\tconst std::string spd_state = android::base::GetProperty("init.svc.vendor.spdaemon", "");
+          \t\tconst std::string snv_state = android::base::GetProperty("init.svc.vendor.sec_nvm", "");
+          \t\tLOGINFO("b2q: SPU service states: spdaemon=%s sec_nvm=%s\\n", spd_state.c_str(), snv_state.c_str());
+          \t\tif (spd_state == "running" && snv_state == "running") {
+          \t\t\tgui_print("[b2q] SPU SERVICES RUNNING\\n");
+          \t\t} else {
+          \t\t\tgui_print_color("error", "[b2q] SPU SERVICES NOT BOTH RUNNING - CONTINUE\\n");
+          \t\t\tstd::string spu_fail_diag;
+          \t\t\tTWFunc::Exec_Cmd("logcat -b all -d -v brief 2>/dev/null | grep -Ei 'spdaemon|sec_nvm|spcom|spu|spss|keymaster' | tail -n 40", spu_fail_diag, true);
+          \t\t\tLOGINFO("b2q: SPU service diagnostic log:\\n%s\\n", spu_fail_diag.c_str());
+          \t\t}
+          \t\tusleep(1500000);
+
           \t\tgui_msg("b2q_qsee_dev_start=[b2q] QSEE DEVICE WAIT");
           \t\tfor (int i = 0; i < 50 && !TWFunc::Path_Exists("/dev/qseecom"); ++i)
           \t\t\tusleep(100000);
@@ -388,17 +453,18 @@ jobs:
           \t\tgui_msg("b2q_keymaster_ok=[b2q] KEYMASTER RUNNING");
           \t\tgui_msg("b2q_keymaster_hal_wait=[b2q] KEYMASTER HAL WAIT");
           \t\tandroid::sp<android::hardware::keymaster::V4_0::IKeymasterDevice> keymaster_hal;
-          \t\tfor (int i = 0; i < 50 && keymaster_hal == nullptr; ++i) {
+          \t\tfor (int i = 0; i < 200 && keymaster_hal == nullptr; ++i) {
           \t\t\tkeymaster_hal = android::hardware::keymaster::V4_0::IKeymasterDevice::tryGetService("default", false);
           \t\t\tif (keymaster_hal == nullptr)
           \t\t\t\tusleep(100000);
           \t\t}
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
-          \t\t\tTWFunc::Exec_Cmd("logcat -d -v brief 2>/dev/null | grep -Ei 'keymaster|qsee|keystore|tee|drmrpc' | tail -n 80", km_diag, true);
-          \t\t\tLOGINFO("b2q: keymaster HAL diagnostic log:\\n%s\\n", km_diag.c_str());
+          \t\t\tTWFunc::Exec_Cmd("echo '--- service states ---'; getprop init.svc.vendor.keymaster-4-0; getprop init.svc.vendor.qseecomd; getprop init.svc.vendor.spdaemon; getprop init.svc.vendor.sec_nvm; echo '--- processes ---'; ps -A 2>/dev/null | grep -E 'keymaster|qseecomd|spdaemon|sec_nvm' || true; echo '--- SPU nodes ---'; ls -la /dev/sp* /dev/sec_nvm_* /dev/cryptoapp /dev/spss_utils 2>&1 | head -n 60; echo '--- keymaster/SPU log ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'keymaster|skeymaster|qsee|keystore|tee|drmrpc|spdaemon|sec_nvm|spcom|spu|spss' | tail -n 45", km_diag, true);
+          \t\t\tLOGINFO("b2q: keymaster/SPU HAL diagnostics:\\n%s\\n", km_diag.c_str());
           \t\t\tLOGINFO("b2q: keymaster service state: %s\\n", android::base::GetProperty("init.svc.vendor.keymaster-4-0", "").c_str());
-          \t\t\tgui_err("b2q_keymaster_hal_fail=[b2q] KEYMASTER HAL FAIL");
+          \t\t\tgui_print_color("error", "[b2q] KEYMASTER HAL FAIL\\n");
+          \t\t\tgui_print("%s\\n", km_diag.c_str());
           \t\t\toperation_end(1);
           \t\t\treturn 0;
           \t\t}
@@ -488,6 +554,7 @@ jobs:
                   lambda m: 'gui_print_color("error", "[b2q] ' + m.group(1) + '\\\\n");',
                   t,
               )
+              t = t.replace('\\\\n");', '\\n");')
               cpp.write_text(t)
           PY
 
@@ -497,6 +564,11 @@ jobs:
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
           grep -Fq 'QSEECOMD RUNNING' gui/action.cpp
+          grep -Fq 'SPU PREP START' gui/action.cpp
+          grep -Fq 'SPU SERVICES RUNNING' gui/action.cpp
+          grep -Fq 'init.svc.vendor.spdaemon' gui/action.cpp
+          grep -Fq 'init.svc.vendor.sec_nvm' gui/action.cpp
+          grep -Fq 'keymaster/SPU HAL diagnostics' gui/action.cpp
           test -f "$DEVICE/recovery/root/system/bin/b2q-firmware-probe.sh"
           bash -n "$DEVICE/recovery/root/system/bin/b2q-firmware-probe.sh"
           grep -Fq 'FIRMWARE PROBE START' gui/action.cpp
@@ -538,7 +610,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6l firmware-softfail + stock QSEE/Keymaster path verified'
+          echo '[b2q] test6m SPU + stock Samsung Keymaster path verified'
 
       - name: Build recovery.img
         shell: bash
@@ -566,10 +638,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6l artifact
+      - name: Upload test6m artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-qsee-after-fw-test6l-${{ github.sha }}
+          name: TWRP-b2q-spu-keymaster-test6m-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
