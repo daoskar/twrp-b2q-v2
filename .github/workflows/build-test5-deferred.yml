@@ -1,9 +1,9 @@
-name: Build TWRP b2q dm-default-key/f2fs test6j
+name: Build TWRP b2q metadata-key diagnostics test6k
 
 on:
   push:
     branches:
-      - test6j-dm-f2fs
+      - test6k-metadata-keydiag
   workflow_dispatch:
 
 permissions:
@@ -49,10 +49,10 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6j device tree
+      - name: Checkout test6k device tree
         uses: actions/checkout@v4
         with:
-          ref: test6j-dm-f2fs
+          ref: test6k-metadata-keydiag
           path: twrp/device/samsung/b2q
 
       - name: Prepare stable baseline and manual metadata action
@@ -143,6 +143,158 @@ jobs:
           if kmtext.count(ctor_old) != 1:
               raise SystemExit(f'Keymaster.cpp ctor anchor count={kmtext.count(ctor_old)}')
           km.write_text(kmtext.replace(ctor_old, ctor_new, 1))
+
+          # test6k: expose the metadata-key pipeline as stage properties and
+          # logs. Never log key bytes, blobs, secdiscardable contents or DM tables.
+          md = vold / 'MetadataCrypt.cpp'
+          mdtext = md.read_text()
+
+          def md_once(old, new, label):
+              global mdtext
+              count = mdtext.count(old)
+              if count != 1:
+                  raise SystemExit(f'MetadataCrypt.cpp {label} anchor count={count}')
+              mdtext = mdtext.replace(old, new, 1)
+
+          md_once(
+              '    auto data_rec = GetEntryForMountPoint(&fstab_default, mount_point);\n',
+              '    android::base::SetProperty("twrp.b2q.md_stage", "fstab_lookup");\n'
+              '    auto data_rec = GetEntryForMountPoint(&fstab_default, mount_point);\n',
+              'fstab lookup')
+
+          md_once(
+              '    CryptoOptions options;\n',
+              '    android::base::SetProperty("twrp.b2q.md_stage", "options");\n'
+              '    CryptoOptions options;\n',
+              'options')
+
+          md_once(
+              '    auto gen = needs_encrypt ? makeGen(options) : neverGen();\n'
+              '    KeyBuffer key;\n'
+              '    if (!read_key(data_rec->metadata_key_dir, gen, &key)) return false;\n\n'
+              '    std::string crypto_blkdev;\n',
+              '    auto gen = needs_encrypt ? makeGen(options) : neverGen();\n'
+              '    KeyBuffer key;\n'
+              '    android::base::SetProperty("twrp.b2q.md_stage", "read_key");\n'
+              '    LOG(INFO) << "[b2q-md] READ KEY START dir=" << data_rec->metadata_key_dir;\n'
+              '    if (!read_key(data_rec->metadata_key_dir, gen, &key)) {\n'
+              '        android::base::SetProperty("twrp.b2q.md_stage", "read_key_fail");\n'
+              '        LOG(ERROR) << "[b2q-md] READ KEY FAIL";\n'
+              '        return false;\n'
+              '    }\n'
+              '    android::base::SetProperty("twrp.b2q.md_stage", "key_ok");\n'
+              '    LOG(INFO) << "[b2q-md] READ KEY OK";\n\n'
+              '    std::string crypto_blkdev;\n',
+              'read key')
+
+          md_once(
+              '    if (!create_crypto_blk_dev(kDmNameUserdata, blk_device, key, options, &crypto_blkdev, &nr_sec))\n'
+              '        return false;\n\n',
+              '    android::base::SetProperty("twrp.b2q.md_stage", "dm_create");\n'
+              '    LOG(INFO) << "[b2q-md] DM CREATE START block=" << blk_device;\n'
+              '    if (!create_crypto_blk_dev(kDmNameUserdata, blk_device, key, options, &crypto_blkdev, &nr_sec)) {\n'
+              '        android::base::SetProperty("twrp.b2q.md_stage", "dm_create_fail");\n'
+              '        LOG(ERROR) << "[b2q-md] DM CREATE FAIL";\n'
+              '        return false;\n'
+              '    }\n'
+              '    android::base::SetProperty("twrp.b2q.md_stage", "dm_ok");\n'
+              '    LOG(INFO) << "[b2q-md] DM CREATE OK block=" << crypto_blkdev << " sectors=" << nr_sec;\n\n',
+              'dm create')
+
+          md_once(
+              '    LOG(INFO) << "Mounting metadata-encrypted filesystem:" << mount_point;\n',
+              '    android::base::SetProperty("twrp.b2q.md_stage", "fs_mount");\n'
+              '    LOG(INFO) << "[b2q-md] FS MOUNT START block=" << crypto_blkdev;\n'
+              '    LOG(INFO) << "Mounting metadata-encrypted filesystem:" << mount_point;\n',
+              'fs mount')
+
+          md_once(
+              '    android::base::SetProperty("ro.crypto.fs_crypto_blkdev", crypto_blkdev);\n',
+              '    android::base::SetProperty("ro.crypto.fs_crypto_blkdev", crypto_blkdev);\n'
+              '    android::base::SetProperty("twrp.b2q.md_stage", "done");\n'
+              '    LOG(INFO) << "[b2q-md] METADATA FUNCTION DONE";\n',
+              'done')
+          md.write_text(mdtext)
+
+          ks = vold / 'KeyStorage.cpp'
+          kstext = ks.read_text()
+
+          def ks_once(old, new, label):
+              global kstext
+              count = kstext.count(old)
+              if count != 1:
+                  raise SystemExit(f'KeyStorage.cpp {label} anchor count={count}')
+              kstext = kstext.replace(old, new, 1)
+
+          ks_once(
+              'bool retrieveKey(const std::string& dir, const KeyAuthentication& auth, KeyBuffer* key) {\n'
+              '    LOG(INFO) << "Retrieving key from keymaster";\n',
+              'bool retrieveKey(const std::string& dir, const KeyAuthentication& auth, KeyBuffer* key) {\n'
+              '    android::base::SetProperty("twrp.b2q.key_stage", "retrieve_entry");\n'
+              '    LOG(INFO) << "[b2q-key] RETRIEVE ENTER dir=" << dir;\n'
+              '    LOG(INFO) << "Retrieving key from keymaster";\n',
+              'retrieve entry')
+
+          ks_once(
+              '    if (!readFileToString(dir + "/" + kFn_version, &version)) return false;\n',
+              '    if (!readFileToString(dir + "/" + kFn_version, &version)) {\n'
+              '        android::base::SetProperty("twrp.b2q.key_stage", "version_fail");\n'
+              '        LOG(ERROR) << "[b2q-key] VERSION READ FAIL";\n'
+              '        return false;\n'
+              '    }\n'
+              '    android::base::SetProperty("twrp.b2q.key_stage", "version_ok");\n',
+              'version')
+
+          ks_once(
+              '    if (!readSecdiscardable(dir + "/" + kFn_secdiscardable, &secdiscardable_hash)) return false;\n',
+              '    if (!readSecdiscardable(dir + "/" + kFn_secdiscardable, &secdiscardable_hash)) {\n'
+              '        android::base::SetProperty("twrp.b2q.key_stage", "secdiscardable_fail");\n'
+              '        LOG(ERROR) << "[b2q-key] SECDISCARDABLE READ FAIL";\n'
+              '        return false;\n'
+              '    }\n'
+              '    android::base::SetProperty("twrp.b2q.key_stage", "secdiscardable_ok");\n',
+              'secdiscardable')
+
+          ks_once(
+              '    if (!readFileToString(dir + "/" + kFn_encrypted_key, &encryptedMessage)) return false;\n',
+              '    if (!readFileToString(dir + "/" + kFn_encrypted_key, &encryptedMessage)) {\n'
+              '        android::base::SetProperty("twrp.b2q.key_stage", "encrypted_key_fail");\n'
+              '        LOG(ERROR) << "[b2q-key] ENCRYPTED KEY READ FAIL";\n'
+              '        return false;\n'
+              '    }\n'
+              '    android::base::SetProperty("twrp.b2q.key_stage", "encrypted_key_ok");\n',
+              'encrypted key')
+
+          ks_once(
+              '    if (auth.usesKeymaster()) {\n'
+              '        Keymaster keymaster;\n'
+              '        if (!keymaster) return false;\n',
+              '    if (auth.usesKeymaster()) {\n'
+              '        android::base::SetProperty("twrp.b2q.key_stage", "keymaster_ctor");\n'
+              '        Keymaster keymaster;\n'
+              '        if (!keymaster) {\n'
+              '            android::base::SetProperty("twrp.b2q.key_stage", "keymaster_ctor_fail");\n'
+              '            LOG(ERROR) << "[b2q-key] KEYMASTER CTOR FAIL";\n'
+              '            return false;\n'
+              '        }\n'
+              '        android::base::SetProperty("twrp.b2q.key_stage", "keymaster_ready");\n'
+              '        LOG(INFO) << "[b2q-key] KEYMASTER CTOR OK";\n',
+              'keymaster ctor')
+
+          ks_once(
+              '        if (!decryptWithKeymasterKey(keymaster, dir, keyParams, encryptedMessage, key))\n'
+              '            return false;\n',
+              '        android::base::SetProperty("twrp.b2q.key_stage", "unwrap");\n'
+              '        LOG(INFO) << "[b2q-key] UNWRAP START";\n'
+              '        if (!decryptWithKeymasterKey(keymaster, dir, keyParams, encryptedMessage, key)) {\n'
+              '            android::base::SetProperty("twrp.b2q.key_stage", "unwrap_fail");\n'
+              '            LOG(ERROR) << "[b2q-key] UNWRAP FAIL";\n'
+              '            return false;\n'
+              '        }\n'
+              '        android::base::SetProperty("twrp.b2q.key_stage", "unwrap_ok");\n'
+              '        LOG(INFO) << "[b2q-key] UNWRAP OK";\n',
+              'unwrap')
+          ks.write_text(kstext)
 
           # test6h: link recovery against Keymaster 4.0 so the GUI action can
           # verify that the HIDL service is actually registered, not merely
@@ -423,7 +575,15 @@ jobs:
           \t\t\t\tgui_err("b2q_data_still_unmounted=[b2q] DATA STILL UNMOUNTED");
           \t\t\t}
           \t\t} else {
-          \t\t\tLOGERR("b2q: metadata mapping was not prepared\\n");
+          \t\t\tstd::string md_stage = android::base::GetProperty("twrp.b2q.md_stage", "unknown");
+          \t\t\tstd::string key_stage = android::base::GetProperty("twrp.b2q.key_stage", "unknown");
+          \t\t\tLOGERR("b2q: metadata mapping was not prepared; md_stage='%s' key_stage='%s'\\n", md_stage.c_str(), key_stage.c_str());
+          \t\t\tif (md_stage == "read_key_fail")
+          \t\t\t\tgui_err("b2q_metadata_key_fail=[b2q] METADATA KEY READ/UNWRAP FAIL");
+          \t\t\telse if (md_stage == "dm_create_fail")
+          \t\t\t\tgui_err("b2q_dm_create_fail=[b2q] DM DEFAULT KEY CREATE FAIL");
+          \t\t\telse
+          \t\t\t\tgui_err("b2q_metadata_stage_fail=[b2q] METADATA PIPELINE FAIL");
           \t\t}
           \t\tPartitionManager.Update_System_Details();
           \t}
@@ -494,6 +654,13 @@ jobs:
           grep -Fq 'F2FS MOUNT FAIL' partitionmanager.cpp
           grep -Fq 'dm-default-key diagnostics' partitionmanager.cpp
           grep -Fq 'F2FS mount failure diagnostics' partitionmanager.cpp
+          grep -Fq '[b2q-md] READ KEY START' "$VOLD/MetadataCrypt.cpp"
+          grep -Fq '[b2q-md] DM CREATE START' "$VOLD/MetadataCrypt.cpp"
+          grep -Fq 'twrp.b2q.md_stage' "$VOLD/MetadataCrypt.cpp"
+          grep -Fq '[b2q-key] UNWRAP START' "$VOLD/KeyStorage.cpp"
+          grep -Fq 'twrp.b2q.key_stage' "$VOLD/KeyStorage.cpp"
+          grep -Fq 'METADATA KEY READ/UNWRAP FAIL' gui/action.cpp
+          grep -Fq 'DM DEFAULT KEY CREATE FAIL' gui/action.cpp
           grep -Fq 'int preparedecrypt(std::string arg);' gui/objects.hpp
           grep -Fq '<text>Prepare Data</text>' gui/theme/common/portrait.xml
           grep -Fq '<action function="set">tw_action=preparedecrypt</action>' gui/theme/common/portrait.xml
@@ -506,7 +673,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6j dm-default-key + F2FS diagnostics patch verified'
+          echo '[b2q] test6k metadata-key + dm-default-key diagnostics patch verified'
 
       - name: Build recovery.img
         shell: bash
@@ -534,10 +701,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6j artifact
+      - name: Upload test6k artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-dm-f2fs-test6j-${{ github.sha }}
+          name: TWRP-b2q-metadata-keydiag-test6k-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
