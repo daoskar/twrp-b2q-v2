@@ -146,12 +146,23 @@ if [ -n "$FW_REAL" ] && [ "$FW_REAL" != "$APN_REAL" ]; then
     fi
 fi
 
-# Never substitute modem firmware blindly. Only use it if it has an image
-# directory and an actual Keymaster-named trustlet.
-if [ -d "$MODEM_MNT/image" ] && has_keymaster_ta "$MODEM_MNT/image"; then
-    log "Keymaster trustlet found in modem firmware; using that tree"
+# Samsung SM8350 stock has two fstab layouts. On q2q/Fold3, fstab.default
+# maps apnhlos -> /vendor/firmware_mnt, while fstab.emmc maps
+# modem -> /vendor/firmware_mnt. Therefore, if apnhlos does not expose image/
+# but the modem partition does expose a normal Qualcomm image/*.mdt tree,
+# prefer that complete modem tree. This is a read-only bind mount.
+if [ -d "$MODEM_MNT/image" ] && has_mdt "$MODEM_MNT/image"; then
+    log "modem image tree is valid; selecting stock SM8350 fstab.emmc layout"
     use_tree_as_firmware_mnt "$MODEM_MNT" || exit 41
+    dump_dir "selected modem firmware" "$MNT"
     exit 0
+fi
+
+# A Keymaster-named trustlet remains useful as an explicit diagnostic signal,
+# but no longer gates the modem fallback because stock Samsung can package
+# trusted apps under other names.
+if [ -d "$MODEM_MNT/image" ] && has_keymaster_ta "$MODEM_MNT/image"; then
+    log "Keymaster-named trustlet found in modem firmware"
 fi
 
 log "no usable /vendor/firmware_mnt/image layout found"
