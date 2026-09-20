@@ -18,9 +18,9 @@ jobs:
     timeout-minutes: 180
     env:
       GH_TOKEN: ${{ github.token }}
-      SOURCE_RUN_ID: '35507437743'
-      SOURCE_ARTIFACT: 'TWRP-b2q-libion-keymaster-test6o-038a731af7e6055fb8f1a8f9d0ec32f13473efda'
-      SOURCE_SHA: '038a731af7e6055fb8f1a8f9d0ec32f13473efda'
+      SOURCE_RUN_ID: '35507805129'
+      SOURCE_ARTIFACT: 'TWRP-b2q-libion-keymaster-test6o-8633783864428226a68ec3d95fda0d0fa55c4b0e'
+      SOURCE_SHA: '8633783864428226a68ec3d95fda0d0fa55c4b0e'
       RECOVERY_SIZE: '100663296'
       TAG: 'v0.1.0-test6o'
 
@@ -115,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          BASE="TWRP-b2q-test6o-038a731a"
+          BASE="TWRP-b2q-test6o-86337838"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
@@ -132,7 +132,7 @@ jobs:
           Samsung Galaxy Z Flip3 **SM-F711B / b2q**.
 
           Exact source commit: \`$SOURCE_SHA\`
-          Exact source build: **#43**
+          Exact source build: **#45**
 
           test6n exposed the first concrete linker failure:
           \`library "libion.so" not found: needed by /vendor/lib64/libkeymasterdeviceutils.so\`.
@@ -162,11 +162,11 @@ jobs:
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" \
-            --title 'TWRP b2q v2 — test6o libion Keymaster (038a731a)' \
+            --title 'TWRP b2q v2 — test6o libion Keymaster (86337838)' \
             --prerelease \
             --notes-file /tmp/release-notes.md \
-            dist/TWRP-b2q-test6o-038a731a-Odin.tar.md5 \
-            dist/TWRP-b2q-test6o-038a731a-Odin.tar \
+            dist/TWRP-b2q-test6o-86337838-Odin.tar.md5 \
+            dist/TWRP-b2q-test6o-86337838-Odin.tar \
             dist/recovery.img \
             dist/recovery.img.sha256 \
             dist/SHA256SUMS.txt
