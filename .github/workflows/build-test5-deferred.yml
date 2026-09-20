@@ -1,9 +1,9 @@
-name: Build TWRP b2q ueventd SPU test6n
+name: Build TWRP b2q libion Keymaster test6o
 
 on:
   push:
     branches:
-      - test6n-ueventd-spu
+      - test6o-libion-keymaster
   workflow_dispatch:
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6n device tree
+      - name: Checkout test6o device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -76,6 +76,9 @@ jobs:
           grep -Fq '/dev/block/sdf1' recovery/root/system/etc/twrp.flags
           grep -Fq 'metadata_encryption=aes-256-xts' recovery/root/system/etc/recovery.fstab
           grep -Fq 'keydirectory=/metadata/vold/metadata_encryption' recovery/root/system/etc/recovery.fstab
+          grep -Fq 'TARGET_RECOVERY_DEVICE_MODULES += \\' device.mk
+          grep -Fq '    libion' device.mk
+          grep -Fq '$(TARGET_OUT_SHARED_LIBRARIES)/libion.so' device.mk
 
           # test6e: stock b2q Keymaster lives on the mounted stock /vendor.
           cat >> recovery/root/init.recovery.qcom.rc <<'EOF'
@@ -637,7 +640,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6n stock ueventd + stable security stack verified'
+          echo '[b2q] test6o libion + stable security stack verified'
 
       - name: Build recovery.img
         shell: bash
@@ -658,6 +661,10 @@ jobs:
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           test -s "$OUT/recovery.img"
+          test -s "$OUT/recovery/root/system/lib64/libion.so"
+          file "$OUT/recovery/root/system/lib64/libion.so"
+          readelf -d "$OUT/recovery/root/system/lib64/libion.so" | head -n 80
+          echo '[b2q] libion.so present in recovery/root/system/lib64'
           stat "$OUT/recovery.img"
           sha256sum "$OUT/recovery.img" | tee "$OUT/recovery.img.sha256"
           if [ "$(stat -c %s "$OUT/recovery.img")" -gt 100663296 ]; then
@@ -665,10 +672,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6n artifact
+      - name: Upload test6o artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-ueventd-spu-test6n-${{ github.sha }}
+          name: TWRP-b2q-libion-keymaster-test6o-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
