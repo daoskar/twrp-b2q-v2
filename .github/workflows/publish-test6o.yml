@@ -3,7 +3,7 @@ name: Publish verified TWRP b2q test6o
 on:
   push:
     branches:
-      - test6o-libion-keymaster
+      - test6o-publish-artifact
     paths:
       - '.github/workflows/publish-test6o.yml'
   workflow_dispatch:
@@ -122,7 +122,21 @@ jobs:
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
+      - name: Upload verified Odin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-b2q-test6o-86337838-Odin
+          path: |
+            dist/TWRP-b2q-test6o-86337838-Odin.tar.md5
+            dist/TWRP-b2q-test6o-86337838-Odin.tar
+            dist/recovery.img
+            dist/recovery.img.sha256
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish prerelease
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
