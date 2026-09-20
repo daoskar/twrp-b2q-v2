@@ -1,9 +1,9 @@
-name: Build TWRP b2q libion Keymaster test6o
+name: Build TWRP b2q SPU persist test6p
 
 on:
   push:
     branches:
-      - test6o-libion-keymaster
+      - test6p-spu-persist
   workflow_dispatch:
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6o device tree
+      - name: Checkout test6p device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -421,6 +421,16 @@ jobs:
           \t\t\tgui_print_color("error", "[b2q] PERSIST RO MOUNT FAIL - CONTINUE\\n");
           \t\t}
 
+          \t\t// test6p: mirror Samsung SM8350 init.spdaemon.rc prerequisites.
+          \t\t// spdaemon uses /mnt/vendor/persist/iar_db and sec_nvm expects
+          \t\t// /mnt/vendor/persist/secnvm before either service is started.
+          \t\tif (TWFunc::Exec_Cmd("mkdir -p /mnt/vendor/persist/iar_db /mnt/vendor/persist/secnvm && chown 1000:1000 /mnt/vendor/persist/iar_db /mnt/vendor/persist/secnvm && chmod 0770 /mnt/vendor/persist/iar_db /mnt/vendor/persist/secnvm && restorecon -R /mnt/vendor/persist/iar_db /mnt/vendor/persist/secnvm >/dev/null 2>&1 || true", false) != 0) {
+          \t\t\tgui_print_color("error", "[b2q] SPU DIR PREP FAIL\\n");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_print("[b2q] SPU DIRS READY\\n");
+
           \t\tstd::string spu_nodes_diag;
           \t\tTWFunc::Exec_Cmd("for n in /dev/spcom /dev/spss_utils /dev/sp_kernel /dev/sp_nvm /dev/sp_ssr /dev/sp_keymaster /dev/sp_keymaster_ssr /dev/sec_nvm_* /dev/cryptoapp /dev/spdaemon_ssr /dev/spu_hal_ssr; do [ -e \\\"$n\\\" ] || continue; chown system:system \\\"$n\\\" 2>/dev/null || true; chmod 0660 \\\"$n\\\" 2>/dev/null || true; done; /system/bin/sh /system/bin/b2q-security-diag.sh", spu_nodes_diag, true);
           \t\tLOGINFO("b2q: pre-SPU diagnostics:\\n%s\\n", spu_nodes_diag.c_str());
@@ -431,9 +441,16 @@ jobs:
           \t\t\treturn 0;
           \t\t}
 
-          \t\tgui_print("[b2q] SPDAEMON + SEC_NVM START\\n");
+          \t\tgui_print("[b2q] SPDAEMON START\\n");
           \t\tandroid::base::SetProperty("ctl.start", "vendor.spdaemon");
+          \t\tusleep(700000);
+          \t\tgui_print("[b2q] SPDAEMON STATE=%s\\n", android::base::GetProperty("init.svc.vendor.spdaemon", "").c_str());
+
+          \t\tgui_print("[b2q] SEC_NVM START\\n");
           \t\tandroid::base::SetProperty("ctl.start", "vendor.sec_nvm");
+          \t\tusleep(700000);
+          \t\tgui_print("[b2q] SEC_NVM STATE=%s\\n", android::base::GetProperty("init.svc.vendor.sec_nvm", "").c_str());
+
           \t\tint spu_stable = 0;
           \t\tfor (int i = 0; i < 150 && spu_stable < 20; ++i) {
           \t\t\tconst bool services_ok =
@@ -590,6 +607,13 @@ jobs:
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
           grep -Fq 'SPU PREP START' gui/action.cpp
+          grep -Fq 'SPU DIRS READY' gui/action.cpp
+          grep -Fq '/mnt/vendor/persist/iar_db' gui/action.cpp
+          grep -Fq '/mnt/vendor/persist/secnvm' gui/action.cpp
+          grep -Fq 'SPDAEMON START' gui/action.cpp
+          grep -Fq 'SPDAEMON STATE=' gui/action.cpp
+          grep -Fq 'SEC_NVM START' gui/action.cpp
+          grep -Fq 'SEC_NVM STATE=' gui/action.cpp
           grep -Fq 'init.svc.vendor.spdaemon' gui/action.cpp
           grep -Fq 'init.svc.vendor.sec_nvm' gui/action.cpp
           grep -Fq 'SPU STACK STABLE' gui/action.cpp
@@ -640,7 +664,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6o libion + stable security stack verified'
+          echo '[b2q] test6p SPU persist + libion security stack verified'
 
       - name: Build recovery.img
         shell: bash
@@ -672,10 +696,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6o artifact
+      - name: Upload test6p artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-libion-keymaster-test6o-${{ github.sha }}
+          name: TWRP-b2q-spu-persist-test6p-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
