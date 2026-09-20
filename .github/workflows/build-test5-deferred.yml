@@ -76,7 +76,7 @@ jobs:
           grep -Fq '/dev/block/sdf1' recovery/root/system/etc/twrp.flags
           grep -Fq 'metadata_encryption=aes-256-xts' recovery/root/system/etc/recovery.fstab
           grep -Fq 'keydirectory=/metadata/vold/metadata_encryption' recovery/root/system/etc/recovery.fstab
-          grep -Fq 'TARGET_RECOVERY_DEVICE_MODULES += \\' device.mk
+          grep -Fq 'TARGET_RECOVERY_DEVICE_MODULES +=' device.mk
           grep -Fq '    libion' device.mk
           grep -Fq '$(TARGET_OUT_SHARED_LIBRARIES)/libion.so' device.mk
 
