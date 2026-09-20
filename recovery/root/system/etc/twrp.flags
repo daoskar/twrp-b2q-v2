@@ -21,7 +21,7 @@
 /optics_image	emmc	/dev/block/bootdevice/by-name/optics	flags=backup=1;flashimg=1;display="Optics Image"
 /prism_image	emmc	/dev/block/bootdevice/by-name/prism		flags=backup=1;flashimg=1;display="Prism Image"
 
-/persist	ext4		/dev/block/bootdevice/by-name/persist		flags=fsflags=ro;display="Persist"
+/persist	ext4		/dev/block/bootdevice/by-name/persist		flags=display="Persist"
 
 # Removable partitions
 /usb-otg	auto		/dev/block/sdf1	/dev/block/sdf			flags=display="USB-OTG";storage;wipeingui;removable
