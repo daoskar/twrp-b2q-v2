@@ -21,3 +21,11 @@ PRODUCT_USE_DYNAMIC_PARTITIONS := true
 PRODUCT_PACKAGES += \
     android.hardware.fastboot@1.0-impl-mock \
     fastbootd
+
+# Recovery security-stack dependency
+# Samsung SM8350 libkeymasterdeviceutils.so requires legacy libion.so.
+TARGET_RECOVERY_DEVICE_MODULES += \
+    libion
+
+RECOVERY_LIBRARY_SOURCE_FILES += \
+    $(TARGET_OUT_SHARED_LIBRARIES)/libion.so
