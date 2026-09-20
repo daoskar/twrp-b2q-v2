@@ -419,7 +419,7 @@ jobs:
           \t\t}
 
           \t\tstd::string spu_nodes_diag;
-          \t\tTWFunc::Exec_Cmd("for n in /dev/qseecom /dev/smcinvoke /dev/qsee_ipc_irq_spss /dev/pft /dev/spcom /dev/spss_utils /dev/sp_kernel /dev/sp_nvm /dev/sp_ssr /dev/sp_keymaster /dev/sp_keymaster_ssr /dev/sec_nvm_* /dev/cryptoapp /dev/spdaemon_ssr /dev/spu_hal_ssr; do [ -e \\\"$n\\\" ] || continue; case \\\"$n\\\" in /dev/qseecom|/dev/smcinvoke|/dev/qsee_ipc_irq_spss|/dev/pft) chown 1000:1004 \\\"$n\\\" 2>/dev/null || true ;; *) chown 1000:1000 \\\"$n\\\" 2>/dev/null || true ;; esac; chmod 0660 \\\"$n\\\" 2>/dev/null || true; done; /system/bin/sh /system/bin/b2q-security-diag.sh", spu_nodes_diag, true);
+          \t\tTWFunc::Exec_Cmd("for n in /dev/spcom /dev/spss_utils /dev/sp_kernel /dev/sp_nvm /dev/sp_ssr /dev/sp_keymaster /dev/sp_keymaster_ssr /dev/sec_nvm_* /dev/cryptoapp /dev/spdaemon_ssr /dev/spu_hal_ssr; do [ -e \\\"$n\\\" ] || continue; chown system:system \\\"$n\\\" 2>/dev/null || true; chmod 0660 \\\"$n\\\" 2>/dev/null || true; done; /system/bin/sh /system/bin/b2q-security-diag.sh", spu_nodes_diag, true);
           \t\tLOGINFO("b2q: pre-SPU diagnostics:\\n%s\\n", spu_nodes_diag.c_str());
 
           \t\tif (!TWFunc::Path_Exists("/vendor/bin/spdaemon") || !TWFunc::Path_Exists("/vendor/bin/sec_nvm")) {
