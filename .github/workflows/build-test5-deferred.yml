@@ -1,9 +1,9 @@
-name: Build TWRP b2q persist RW test6q
+name: Build TWRP b2q direct persist SPU test6r
 
 on:
   push:
     branches:
-      - test6q-persist-rw
+      - test6r-direct-persist-spu
   workflow_dispatch:
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6q device tree
+      - name: Checkout test6r device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -139,6 +139,15 @@ jobs:
           grep -Fq 'service vendor.sec_nvm /vendor/bin/sec_nvm' recovery/root/init.recovery.qcom.rc
           grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
           test -f recovery/root/vendor/etc/ueventd.rc
+          UEVENTD=recovery/root/vendor/etc/ueventd.rc
+          if ! grep -Fq 'firmware_directories /vendor/firmware_mnt/image/ /vendor/firmware-modem/image/ /spu/ /vendor/firmware/wifi/' "$UEVENTD"; then
+            {
+              echo 'firmware_directories /vendor/firmware_mnt/image/ /vendor/firmware-modem/image/ /spu/ /vendor/firmware/wifi/'
+              cat "$UEVENTD"
+            } > "$UEVENTD.tmp"
+            mv "$UEVENTD.tmp" "$UEVENTD"
+          fi
+          grep -Fq 'firmware_directories /vendor/firmware_mnt/image/ /vendor/firmware-modem/image/ /spu/ /vendor/firmware/wifi/' "$UEVENTD"
           grep -Fq '/dev/sp_kernel            0660   system     system' recovery/root/vendor/etc/ueventd.rc
           grep -Fq '/dev/sp_keymaster         0660   system     system' recovery/root/vendor/etc/ueventd.rc
           grep -Fq '/dev/qsee_ipc_irq_spss    0660   system     drmrpc' recovery/root/vendor/etc/ueventd.rc
@@ -412,28 +421,50 @@ jobs:
           \t\tgui_print("[b2q] QSEECOMD STABLE\\n");
 
           \t\tgui_print("[b2q] SPU PREP START\\n");
-          \t\tbool persist_ready = PartitionManager.Mount_By_Path("/persist", false);
-          \t\tif (!persist_ready) {
-          \t\t\tgui_print_color("error", "[b2q] PERSIST RW MOUNT FAIL\\n");
-          \t\t\toperation_end(1);
-          \t\t\treturn 0;
-          \t\t}
           \t\tTWFunc::Recursive_Mkdir("/mnt/vendor/persist");
-          \t\tif (TWFunc::Exec_Cmd("mountpoint -q /mnt/vendor/persist || mount -o bind /persist /mnt/vendor/persist", false) != 0) {
-          \t\t\tgui_print_color("error", "[b2q] PERSIST BIND FAIL\\n");
-          \t\t\toperation_end(1);
-          \t\t\treturn 0;
-          \t\t}
-          \t\tif (TWFunc::Exec_Cmd("grep ' /persist ' /proc/mounts | grep -q ' rw,'", false) != 0) {
-          \t\t\tgui_print_color("error", "[b2q] PERSIST NOT RW - STOP\\n");
-          \t\t\toperation_end(1);
-          \t\t\treturn 0;
-          \t\t}
-          \t\tgui_print("[b2q] PERSIST RW READY\\n");
+          \t\tTWFunc::Recursive_Mkdir("/spu");
 
-          \t\t// test6q: mirror Samsung SM8350 fstab + init.spdaemon.rc.
-          \t\t// Stock mounts persist rw and prepares both SPU state directories
-          \t\t// before vendor.spdaemon/vendor.sec_nvm are started.
+          \t\t// test6r: mount Samsung SM8350 persist at its stock path directly.
+          \t\t// Do not route this through TWRP's /persist partition object.
+          \t\tif (!TWFunc::Path_Exists("/dev/block/bootdevice/by-name/persist")) {
+          \t\t\tgui_print_color("error", "[b2q] PERSIST BLOCK MISSING\\n");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tif (TWFunc::Exec_Cmd("mountpoint -q /mnt/vendor/persist || mount -t ext4 -o rw,noatime,nosuid,nodev /dev/block/bootdevice/by-name/persist /mnt/vendor/persist", false) != 0) {
+          \t\t\tstd::string persist_diag;
+          \t\t\tTWFunc::Exec_Cmd("echo '--- persist block ---'; ls -l /dev/block/bootdevice/by-name/persist; blkid /dev/block/bootdevice/by-name/persist 2>&1 || true; echo '--- mounts ---'; grep -E 'persist|spu' /proc/mounts || true; echo '--- ext4 dmesg ---'; dmesg | grep -Ei 'persist|EXT4|I/O error|dm-|ufs' | tail -n 100", persist_diag, true);
+          \t\t\tLOGINFO("b2q: direct persist mount diagnostics:\\n%s\\n", persist_diag.c_str());
+          \t\t\tgui_print_color("error", "[b2q] PERSIST DIRECT MOUNT FAIL\\n");
+          \t\t\tgui_print("%s\\n", persist_diag.c_str());
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tif (TWFunc::Exec_Cmd("grep ' /mnt/vendor/persist ' /proc/mounts | grep -q ' rw,'", false) != 0) {
+          \t\t\tgui_print_color("error", "[b2q] PERSIST DIRECT NOT RW - STOP\\n");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_print("[b2q] PERSIST DIRECT RW READY\\n");
+
+          \t\t// Stock b2q/SM8350 also mounts the dedicated SPU firmware partition.
+          \t\tif (!TWFunc::Path_Exists("/dev/block/bootdevice/by-name/spu")) {
+          \t\t\tgui_print_color("error", "[b2q] SPU BLOCK MISSING\\n");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tif (TWFunc::Exec_Cmd("mountpoint -q /spu || mount -t ext4 -o ro,noatime,nosuid,nodev /dev/block/bootdevice/by-name/spu /spu", false) != 0) {
+          \t\t\tstd::string spu_mount_diag;
+          \t\t\tTWFunc::Exec_Cmd("echo '--- spu block ---'; ls -l /dev/block/bootdevice/by-name/spu; blkid /dev/block/bootdevice/by-name/spu 2>&1 || true; echo '--- mounts ---'; grep -E 'persist|spu' /proc/mounts || true; echo '--- spu dir ---'; ls -la /spu 2>&1 | head -n 80; dmesg | grep -Ei 'spu|spss|EXT4|I/O error' | tail -n 100", spu_mount_diag, true);
+          \t\t\tLOGINFO("b2q: SPU firmware mount diagnostics:\\n%s\\n", spu_mount_diag.c_str());
+          \t\t\tgui_print_color("error", "[b2q] SPU FIRMWARE MOUNT FAIL\\n");
+          \t\t\tgui_print("%s\\n", spu_mount_diag.c_str());
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_print("[b2q] SPU FIRMWARE READY\\n");
+
+          \t\t// Mirror Samsung init.spdaemon.rc state directories.
           \t\tif (TWFunc::Exec_Cmd("mkdir -p /mnt/vendor/persist/iar_db /mnt/vendor/persist/secnvm && chown 1000:1000 /mnt/vendor/persist/iar_db /mnt/vendor/persist/secnvm && chmod 0770 /mnt/vendor/persist/iar_db /mnt/vendor/persist/secnvm", false) != 0) {
           \t\t\tgui_print_color("error", "[b2q] SPU DIR PREP FAIL\\n");
           \t\t\toperation_end(1);
@@ -445,7 +476,7 @@ jobs:
           \t\t\toperation_end(1);
           \t\t\treturn 0;
           \t\t}
-          \t\tgui_print("[b2q] SPU DIRS RW READY\\n");
+          \t\tgui_print("[b2q] SPU DIRS DIRECT READY\\n");
 
           \t\tstd::string spu_nodes_diag;
           \t\tTWFunc::Exec_Cmd("for n in /dev/spcom /dev/spss_utils /dev/sp_kernel /dev/sp_nvm /dev/sp_ssr /dev/sp_keymaster /dev/sp_keymaster_ssr /dev/sec_nvm_* /dev/cryptoapp /dev/spdaemon_ssr /dev/spu_hal_ssr; do [ -e \\\"$n\\\" ] || continue; chown system:system \\\"$n\\\" 2>/dev/null || true; chmod 0660 \\\"$n\\\" 2>/dev/null || true; done; /system/bin/sh /system/bin/b2q-security-diag.sh", spu_nodes_diag, true);
@@ -623,9 +654,13 @@ jobs:
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
           grep -Fq 'SPU PREP START' gui/action.cpp
-          grep -Fq 'PERSIST RW READY' gui/action.cpp
-          grep -Fq 'PERSIST NOT RW - STOP' gui/action.cpp
-          grep -Fq 'SPU DIRS RW READY' gui/action.cpp
+          grep -Fq 'PERSIST DIRECT RW READY' gui/action.cpp
+          grep -Fq 'PERSIST DIRECT MOUNT FAIL' gui/action.cpp
+          grep -Fq 'SPU FIRMWARE READY' gui/action.cpp
+          grep -Fq 'SPU FIRMWARE MOUNT FAIL' gui/action.cpp
+          grep -Fq 'SPU DIRS DIRECT READY' gui/action.cpp
+          grep -Fq '/dev/block/bootdevice/by-name/persist' gui/action.cpp
+          grep -Fq '/dev/block/bootdevice/by-name/spu' gui/action.cpp
           grep -Fq '/mnt/vendor/persist/iar_db' gui/action.cpp
           grep -Fq '/mnt/vendor/persist/secnvm' gui/action.cpp
           ! grep -Fq 'PERSIST RO READY' gui/action.cpp
@@ -685,7 +720,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6q persist RW + SPU security stack verified'
+          echo '[b2q] test6r direct persist + SPU firmware verified'
 
       - name: Build recovery.img
         shell: bash
@@ -717,12 +752,28 @@ jobs:
             exit 1
           fi
 
-      - name: Upload test6q artifact
+      - name: Build Odin test6r package
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
+          cd "$OUT"
+          BASE="TWRP-b2q-test6r-${GITHUB_SHA::8}"
+          tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
+          cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
+          md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
+          sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
+          tar -tf "$BASE-Odin.tar"
+
+      - name: Upload test6r artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-persist-rw-test6q-${{ github.sha }}
+          name: TWRP-b2q-direct-persist-spu-test6r-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
+            twrp/out/target/product/b2q/TWRP-b2q-test6r-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6r-*-Odin.tar.md5
+            twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
