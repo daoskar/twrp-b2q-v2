@@ -586,12 +586,14 @@ jobs:
           grep -Fq 'ADD_ACTION(preparedecrypt);' gui/action.cpp
           grep -Fq 'GUIAction::preparedecrypt' gui/action.cpp
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
-          grep -Fq 'QSEECOMD RUNNING' gui/action.cpp
           grep -Fq 'SPU PREP START' gui/action.cpp
-          grep -Fq 'SPU SERVICES RUNNING' gui/action.cpp
           grep -Fq 'init.svc.vendor.spdaemon' gui/action.cpp
           grep -Fq 'init.svc.vendor.sec_nvm' gui/action.cpp
           grep -Fq 'SPU STACK STABLE' gui/action.cpp
+          grep -Fq 'SPU STACK UNSTABLE' gui/action.cpp
+          grep -Fq 'QSEECOMD STABLE' gui/action.cpp
+          grep -Fq 'QSEECOMD UNSTABLE' gui/action.cpp
+          grep -Fq 'KEYMASTER HAL WAIT' gui/action.cpp
           grep -Fq 'QSEECOMD STABLE' gui/action.cpp
           grep -Fq 'b2q-security-diag.sh' gui/action.cpp
           grep -Fq 'keymaster HAL diagnostics' gui/action.cpp
@@ -612,7 +614,6 @@ jobs:
           grep -Fq 'android.hardware.keymaster@4.0' Android.mk
           grep -Fq 'android.hardware.keymaster@4.0' gui/Android.bp
           grep -Fq 'KEYMASTER DIR OK' gui/action.cpp
-          grep -Fq 'KEYMASTER RUNNING' gui/action.cpp
           grep -Fq 'KEYSTORE2 RUNNING' gui/action.cpp
           grep -Fq 'AServiceManager_checkService' "$VOLD/Keymaster.cpp"
           ! grep -Fq 'AServiceManager_waitForService(keystore2_service_name)' "$VOLD/Keymaster.cpp"
