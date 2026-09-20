@@ -670,7 +670,7 @@ jobs:
           grep -Fq 'SPDAEMON + SEC_NVM STOCK START' gui/action.cpp
           ! grep -Fq 'usleep(700000);' gui/action.cpp
           grep -Fq 'SPDAEMON STATE=' gui/action.cpp
-          grep -Fq 'SEC_NVM START' gui/action.cpp
+          ! grep -Fq 'gui_print("[b2q] SEC_NVM START' gui/action.cpp
           grep -Fq 'SEC_NVM STATE=' gui/action.cpp
           grep -Fq 'init.svc.vendor.spdaemon' gui/action.cpp
           grep -Fq 'init.svc.vendor.sec_nvm' gui/action.cpp
