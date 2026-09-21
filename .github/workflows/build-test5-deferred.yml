@@ -1,9 +1,9 @@
-name: Build TWRP b2q Keymaster without SPU test6u
+name: Build TWRP b2q Samsung Keymaster test6v
 
 on:
   push:
     branches:
-      - test6u-skip-sec-nvm
+      - test6v-samsung-keymaster
   workflow_dispatch:
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6u device tree
+      - name: Checkout test6v device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -64,6 +64,53 @@ jobs:
           VOLD="$GITHUB_WORKSPACE/twrp/system/vold"
           cd "$DEVICE"
           bash scripts/prepare-tree.sh
+
+          # test6v: build the Samsung Keymaster wrapper used by SM8350 Lineage.
+          # Pin both open-source wrapper and proprietary device library to exact commits.
+          SAMSUNG_KM="$GITHUB_WORKSPACE/twrp/hardware/samsung/hidl/keymaster"
+          mkdir -p "$SAMSUNG_KM"
+          KM_SRC_BASE="https://raw.githubusercontent.com/LineageOS/android_hardware_samsung/340c2b58099de516e76d33b1f10578e33df44f90/hidl/keymaster"
+          curl -fL --retry 3 "$KM_SRC_BASE/Android.mk" -o "$SAMSUNG_KM/Android.mk"
+          curl -fL --retry 3 "$KM_SRC_BASE/service.cpp" -o "$SAMSUNG_KM/service.cpp"
+          curl -fL --retry 3 "$KM_SRC_BASE/android.hardware.keymaster@4.0-service.samsung.rc" -o "$SAMSUNG_KM/android.hardware.keymaster@4.0-service.samsung.rc"
+          grep -Fq 'LOCAL_MODULE := android.hardware.keymaster@4.0-service.samsung' "$SAMSUNG_KM/Android.mk"
+          grep -Fq 'CreateSKeymasterDevice' "$SAMSUNG_KM/service.cpp"
+
+          KM_PREBUILT="$DEVICE/keymaster_prebuilt"
+          mkdir -p "$KM_PREBUILT"
+          curl -fL --retry 3             "https://raw.githubusercontent.com/samsung-sm8350/proprietary_vendor_samsung/3bf7df25d3fce7a2f09a082cdf2057281bb9760e/sm8350-common/proprietary/vendor/lib64/libskeymaster4device.so"             -o "$KM_PREBUILT/libskeymaster4device.so"
+          test "$(stat -c %s "$KM_PREBUILT/libskeymaster4device.so")" -gt 10000
+          file "$KM_PREBUILT/libskeymaster4device.so" | grep -Fq 'ELF 64-bit'
+          nm -D --defined-only "$KM_PREBUILT/libskeymaster4device.so" | c++filt |             grep -Fq 'skeymaster::CreateSKeymasterDevice(android::hardware::keymaster::V4_0::SecurityLevel)'
+
+          cat > "$KM_PREBUILT/Android.mk" <<'EOF'
+          LOCAL_PATH := $(call my-dir)
+
+          include $(CLEAR_VARS)
+          LOCAL_MODULE := libskeymaster4device
+          LOCAL_SRC_FILES := libskeymaster4device.so
+          LOCAL_MODULE_CLASS := SHARED_LIBRARIES
+          LOCAL_MODULE_SUFFIX := .so
+          LOCAL_MODULE_TAGS := optional
+          LOCAL_MODULE_OWNER := samsung
+          LOCAL_VENDOR_MODULE := true
+          LOCAL_MULTILIB := 64
+          LOCAL_CHECK_ELF_FILES := false
+          include $(BUILD_PREBUILT)
+          EOF
+
+          if ! grep -Fq 'TARGET_KEYMASTER_VARIANT := samsung' BoardConfig.mk; then
+            printf '\n# test6v: Samsung SM8350 Keymaster wrapper\nTARGET_KEYMASTER_VARIANT := samsung\n' >> BoardConfig.mk
+          fi
+          cat >> device.mk <<'EOF'
+
+          # test6v: build Samsung Keymaster wrapper and copy it into recovery /system/bin.
+          TARGET_RECOVERY_DEVICE_MODULES += \
+              android.hardware.keymaster@4.0-service.samsung
+
+          RECOVERY_BINARY_SOURCE_FILES += \
+              $(TARGET_OUT_VENDOR_EXECUTABLES)/hw/android.hardware.keymaster@4.0-service.samsung
+          EOF
 
           grep -Fq 'TW_INCLUDE_CRYPTO := true' BoardConfig.mk
           grep -Fq 'TW_INCLUDE_CRYPTO_FBE := true' BoardConfig.mk
@@ -95,8 +142,8 @@ jobs:
               stdio_to_kmsg
               seclabel u:r:recovery:s0
 
-          # b2q test6i: match the stock q2q Keymaster runtime identity.
-          service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service
+          # b2q test6v: use the Samsung SM8350 wrapper built into recovery.
+          service vendor.keymaster-4-0 /system/bin/android.hardware.keymaster@4.0-service.samsung
               override
               interface android.hardware.keymaster@4.0::IKeymasterDevice default
               class early_hal
@@ -136,7 +183,9 @@ jobs:
           grep -A8 -F 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc | grep -Fq 'shutdown critical'
           ! grep -A10 -F 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc | grep -Fq 'oneshot'
           ! grep -A10 -F 'service vendor.sec_nvm /vendor/bin/sec_nvm' recovery/root/init.recovery.qcom.rc | grep -Fq 'oneshot'
-          grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
+          grep -Fq 'service vendor.keymaster-4-0 /system/bin/android.hardware.keymaster@4.0-service.samsung' recovery/root/init.recovery.qcom.rc
+          grep -Fq 'TARGET_KEYMASTER_VARIANT := samsung' BoardConfig.mk
+          grep -Fq 'android.hardware.keymaster@4.0-service.samsung' device.mk
           grep -Fq 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc
           grep -Fq 'service vendor.sec_nvm /vendor/bin/sec_nvm' recovery/root/init.recovery.qcom.rc
           grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
@@ -378,12 +427,12 @@ jobs:
           \t\t\toperation_end(1);
           \t\t\treturn 0;
           \t\t}
-          \t\tif (!TWFunc::Path_Exists("/vendor/bin/hw/android.hardware.keymaster@4.0-service")) {
-          \t\t\tgui_print_color("error", "[b2q] STOCK KEYMASTER BINARY MISSING\\n");
+          \t\tif (!TWFunc::Path_Exists("/system/bin/android.hardware.keymaster@4.0-service.samsung")) {
+          \t\t\tgui_print_color("error", "[b2q] SAMSUNG KEYMASTER WRAPPER MISSING\\n");
           \t\t\toperation_end(1);
           \t\t\treturn 0;
           \t\t}
-          \t\tgui_print("[b2q] STOCK QSEE + KEYMASTER BINARIES OK\\n");
+          \t\tgui_print("[b2q] QSEE + SAMSUNG KEYMASTER WRAPPER OK\\n");
 
           \t\tgui_msg("b2q_dak_start=[b2q] DAK PREP START");
           \t\tif (TWFunc::Exec_Cmd("mkdir -p /mnt/vendor/efs/DAK && chown 1000:1000 /mnt/vendor/efs/DAK && chmod 0775 /mnt/vendor/efs/DAK && if [ -e /mnt/vendor/efs/DAK/gakkeybox ]; then chown 1000:1000 /mnt/vendor/efs/DAK/gakkeybox; chmod 0644 /mnt/vendor/efs/DAK/gakkeybox; fi && restorecon -R /mnt/vendor/efs/DAK >/dev/null 2>&1 || true", false) != 0) {
@@ -580,7 +629,7 @@ jobs:
           bash -n "$DEVICE/recovery/root/system/bin/b2q-firmware-probe.sh"
           grep -Fq 'FIRMWARE PROBE START' gui/action.cpp
           grep -Fq 'FIRMWARE IMAGE MISSING - CONTINUE' gui/action.cpp
-          grep -Fq 'STOCK QSEE + KEYMASTER BINARIES OK' gui/action.cpp
+          grep -Fq 'QSEE + SAMSUNG KEYMASTER WRAPPER OK' gui/action.cpp
           grep -Fq 'firmware probe diagnostics' gui/action.cpp
           ! grep -Fq 'b2q_firmware_probe_fail=' gui/action.cpp
           ! grep -Fq 'String resource' gui/action.cpp
@@ -616,7 +665,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6u direct Keymaster path verified'
+          echo '[b2q] test6v Samsung Keymaster wrapper verified'
 
       - name: Build recovery.img
         shell: bash
@@ -641,6 +690,11 @@ jobs:
           file "$OUT/recovery/root/system/lib64/libion.so"
           readelf -d "$OUT/recovery/root/system/lib64/libion.so" | head -n 80
           echo '[b2q] libion.so present in recovery/root/system/lib64'
+          test -s "$OUT/recovery/root/system/bin/android.hardware.keymaster@4.0-service.samsung"
+          file "$OUT/recovery/root/system/bin/android.hardware.keymaster@4.0-service.samsung" | grep -Fq 'ELF 64-bit'
+          readelf -d "$OUT/recovery/root/system/bin/android.hardware.keymaster@4.0-service.samsung" | tee "$OUT/samsung-keymaster.dynamic.txt"
+          grep -Fq 'libskeymaster4device.so' "$OUT/samsung-keymaster.dynamic.txt"
+          echo '[b2q] Samsung Keymaster wrapper present in final recovery rootfs'
           stat "$OUT/recovery.img"
           sha256sum "$OUT/recovery.img" | tee "$OUT/recovery.img.sha256"
           if [ "$(stat -c %s "$OUT/recovery.img")" -gt 100663296 ]; then
@@ -648,28 +702,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6u package
+      - name: Build Odin test6v package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6u-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6v-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6u artifact
+      - name: Upload test6v artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-keymaster-direct-test6u-${{ github.sha }}
+          name: TWRP-b2q-samsung-keymaster-test6v-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6u-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6u-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6v-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6v-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
