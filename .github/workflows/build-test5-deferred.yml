@@ -731,8 +731,10 @@ jobs:
           grep -Fq 'SEC_NVM FIRST START' gui/action.cpp
           grep -Fq 'SEC_NVM ARMED' gui/action.cpp
           grep -Fq 'SPDAEMON AFTER NVM START' gui/action.cpp
-          grep -Fq 'SP KEYMASTER CHANNEL READY' gui/action.cpp
-          grep -Fq 'SPU STACK READY FOR KEYMASTER' gui/action.cpp
+          grep -Fq 'SP KEYMASTER PRECHECK=missing - CONTINUE' gui/action.cpp
+          grep -Fq 'SPU STACK READY FOR KEYMASTER CLIENT' gui/action.cpp
+          grep -Fq 'SP KEYMASTER POSTCHECK=' gui/action.cpp
+          ! grep -Fq 'SP KEYMASTER CHANNEL FAIL' gui/action.cpp
           grep -Fq 'SetProperty("ctl.start", "vendor.sec_nvm")' gui/action.cpp
           grep -Fq 'SetProperty("ctl.start", "vendor.spdaemon")' gui/action.cpp
           python3 -c 'from pathlib import Path; s=Path("gui/action.cpp").read_text(); a=s.index("vendor.sec_nvm"); b=s.index("vendor.spdaemon"); assert a < b, (a, b)'
