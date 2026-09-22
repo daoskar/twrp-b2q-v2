@@ -32,14 +32,8 @@ static void sleep_ms(long milliseconds) {
     }
 }
 
-static bool channel_ready(spcom_is_app_loaded_fn is_loaded, const char *channel) {
-    if (is_loaded != NULL && is_loaded(channel)) {
-        return true;
-    }
-
-    char node[160];
-    const int n = snprintf(node, sizeof(node), "/dev/%s", channel);
-    return n > 0 && (size_t)n < sizeof(node) && access(node, F_OK) == 0;
+static bool app_loaded(spcom_is_app_loaded_fn is_loaded, const char *channel) {
+    return is_loaded != NULL && is_loaded(channel);
 }
 
 int main(int argc, char **argv) {
@@ -89,8 +83,10 @@ int main(int argc, char **argv) {
     copy_symbol(handle, "spcom_is_app_loaded", &is_loaded, sizeof(is_loaded));
     copy_symbol(handle, "spcom_is_sp_subsystem_link_up", &link_up, sizeof(link_up));
 
-    if (load_app == NULL) {
-        fprintf(stderr, "libspcom: missing spcom_load_app\n");
+    if (load_app == NULL || is_loaded == NULL) {
+        fprintf(stderr, "libspcom: missing required symbol%s%s\n",
+                load_app == NULL ? " spcom_load_app" : "",
+                is_loaded == NULL ? " spcom_is_app_loaded" : "");
         dlclose(handle);
         return 69;
     }
@@ -101,7 +97,7 @@ int main(int argc, char **argv) {
         printf("[b2q-sp-loader] link_up=%d\n", link_up() ? 1 : 0);
     }
 
-    if (channel_ready(is_loaded, channel)) {
+    if (app_loaded(is_loaded, channel)) {
         printf("[b2q-sp-loader] already loaded: %s\n", channel);
         dlclose(handle);
         return 0;
@@ -117,7 +113,7 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     for (int i = 0; i < 500; ++i) {
-        if (channel_ready(is_loaded, channel)) {
+        if (app_loaded(is_loaded, channel)) {
             printf("[b2q-sp-loader] loaded: %s after %d ms\n", channel, i * 10);
             dlclose(handle);
             return 0;
