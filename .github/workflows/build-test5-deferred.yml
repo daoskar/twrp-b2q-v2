@@ -585,9 +585,9 @@ jobs:
           \t\t\t"echo firmware_name=$FW; echo asym=$AS; echo crypto=$CR; echo keymaster=$KM; "
           \t\t\t"[ -x /system/bin/b2q-sp-loader ] || exit 71; "
           \t\t\t"[ -r \\\"$CR\\\" ] || exit 72; [ -r \\\"$KM\\\" ] || exit 73; "
-          \t\t\t"if [ -r \\\"$AS\\\" ]; then /system/bin/b2q-sp-loader asym_cryptoapp \\\"$AS\\\" 262144 || true; fi; "
-          \t\t\t"/system/bin/b2q-sp-loader cryptoapp \\\"$CR\\\" 262144 || exit 74; "
-          \t\t\t"/system/bin/b2q-sp-loader sp_keymaster \\\"$KM\\\" 262144 || exit 75; "
+          \t\t\t"if [ -r \\\"$AS\\\" ]; then LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin /system/bin/b2q-sp-loader asym_cryptoapp \\\"$AS\\\" 262144 || true; fi; "
+          \t\t\t"LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin /system/bin/b2q-sp-loader cryptoapp \\\"$CR\\\" 262144 || exit 74; "
+          \t\t\t"LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin /system/bin/b2q-sp-loader sp_keymaster \\\"$KM\\\" 262144 || exit 75; "
           \t\t\t"ls -l /dev/cryptoapp /dev/sp_keymaster 2>&1 || true; "
           \t\t\t"if [ -e /dev/sp_keymaster ]; then echo sp_keymaster_node=present; else echo sp_keymaster_node=pending; fi",
           \t\t\tsp_force_diag, true);
