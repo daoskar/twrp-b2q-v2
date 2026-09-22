@@ -1,9 +1,9 @@
-name: Build TWRP b2q SP app signatures test6z
+name: Build TWRP b2q Keymaster client test6aa
 
 on:
   push:
     branches:
-      - test6z-sp-app-signatures
+      - test6aa-keymaster-client
   workflow_dispatch:
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6z device tree
+      - name: Checkout test6aa device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -558,28 +558,21 @@ jobs:
           \t\t}
           \t\tgui_print("[b2q] SPDAEMON RUNNING\\n");
 
-          \t\t// Wait until the SP keymaster channel appears; do not start the
-          \t\t// Android HAL before the SP side is actually available.
-          \t\tfor (int i = 0; i < 100 && !TWFunc::Path_Exists("/dev/sp_keymaster"); ++i)
-          \t\t\tusleep(100000);
-          \t\tif (!TWFunc::Path_Exists("/dev/sp_keymaster")) {
-          \t\t\tstd::string spu_diag;
-          \t\t\tTWFunc::Exec_Cmd("echo '--- states ---'; getprop init.svc.vendor.sec_nvm; getprop init.svc.vendor.spdaemon; echo '--- spcom load props ---'; getprop | grep -Ei 'spcom|spu|spss'; echo '--- expected SP app files ---'; ls -l /vendor/firmware_mnt/image/keym*.sig /vendor/firmware_mnt/image/crypt*.sig /vendor/firmware_mnt/image/asym*.sig 2>&1; echo '--- nodes ---'; ls -l /dev/sp* /dev/sec_nvm_* 2>&1; echo '--- spdaemon logcat ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'spdaemon|spcom|sec_nvm|sp_keymaster|cryptoapp|asym_cryptoapp' | tail -n 220; echo '--- relevant dmesg ---'; dmesg | grep -Ei 'spu|spss|spcom|sec_nvm|remoteproc|watchdog|fatal|ssr' | tail -n 180", spu_diag, true);
-          \t\t\tLOGINFO("b2q: SP keymaster wait diagnostics:\\n%s\\n", spu_diag.c_str());
-          \t\t\tgui_print_color("error", "[b2q] SP KEYMASTER CHANNEL FAIL\\n");
-          \t\t\tgui_print("%s\\n", spu_diag.c_str());
-          \t\t\toperation_end(1);
-          \t\t\treturn 0;
-          \t\t}
-          \t\tgui_print("[b2q] SP KEYMASTER CHANNEL READY\\n");
-          \t\tusleep(500000);
+          \t\t// test6aa: KeymasterUtils::spu_init() itself registers the
+          \t\t// sp_keymaster SPCom client. Do not require /dev/sp_keymaster
+          \t\t// before starting the Samsung Keymaster wrapper.
+          \t\tif (TWFunc::Path_Exists("/dev/sp_keymaster"))
+          \t\t\tgui_print("[b2q] SP KEYMASTER PRECHECK=present\\n");
+          \t\telse
+          \t\t\tgui_print("[b2q] SP KEYMASTER PRECHECK=missing - CONTINUE\\n");
+
           \t\tif (android::base::GetProperty("init.svc.vendor.sec_nvm", "") != "running" ||
           \t\t\tandroid::base::GetProperty("init.svc.vendor.spdaemon", "") != "running") {
           \t\t\tgui_print_color("error", "[b2q] SPU STACK LOST BEFORE KEYMASTER\\n");
           \t\t\toperation_end(1);
           \t\t\treturn 0;
           \t\t}
-          \t\tgui_print("[b2q] SPU STACK READY FOR KEYMASTER\\n");
+          \t\tgui_print("[b2q] SPU STACK READY FOR KEYMASTER CLIENT\\n");
 
           \t\tgui_msg("b2q_keymaster_dir_start=[b2q] KEYMASTER DIR START");
           \t\tif (!TWFunc::Recursive_Mkdir("/data/vendor/keymaster")) {
@@ -610,7 +603,7 @@ jobs:
           \t\t}
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
-          \t\t\tTWFunc::Exec_Cmd("/system/bin/sh /system/bin/b2q-security-diag.sh; echo '--- previous pstore ---'; if [ -d /sys/fs/pstore ]; then for f in /sys/fs/pstore/*; do [ -f \\\"$f\\\" ] || continue; echo \\\"=== $f ===\\\"; grep -Eai 'panic|watchdog|spu|spss|sec_nvm|spcom|fatal|reboot|restart' \\\"$f\\\" | tail -n 120; done; fi", km_diag, true);
+          \t\t\tTWFunc::Exec_Cmd("/system/bin/sh /system/bin/b2q-security-diag.sh; echo '--- SP nodes after Keymaster attempt ---'; ls -l /dev/sp* /dev/sec_nvm_* 2>&1; echo '--- SP app files ---'; ls -l /vendor/firmware_mnt/image/keym*.sig /vendor/firmware_mnt/image/crypt*.sig /vendor/firmware_mnt/image/asym*.sig 2>&1; echo '--- Keymaster/SP logcat ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'Keymaster|keymasterutils|skeymaster|spu_init|sp_keymaster|spcom|spdaemon|sec_nvm|cryptoapp|hwservicemanager' | tail -n 260; echo '--- previous pstore ---'; if [ -d /sys/fs/pstore ]; then for f in /sys/fs/pstore/*; do [ -f \\\"$f\\\" ] || continue; echo \\\"=== $f ===\\\"; grep -Eai 'panic|watchdog|spu|spss|sec_nvm|spcom|fatal|reboot|restart' \\\"$f\\\" | tail -n 120; done; fi", km_diag, true);
           \t\t\tLOGINFO("b2q: keymaster HAL diagnostics:\\n%s\\n", km_diag.c_str());
           \t\t\tgui_print_color("error", "[b2q] KEYMASTER HAL FAIL\\n");
           \t\t\tgui_print("%s\\n", km_diag.c_str());
@@ -618,6 +611,10 @@ jobs:
           \t\t\treturn 0;
           \t\t}
           \t\tgui_msg("b2q_keymaster_hal_ok=[b2q] KEYMASTER HAL READY");
+          \t\tif (TWFunc::Path_Exists("/dev/sp_keymaster"))
+          \t\t\tgui_print("[b2q] SP KEYMASTER POSTCHECK=present\\n");
+          \t\telse
+          \t\t\tgui_print("[b2q] SP KEYMASTER POSTCHECK=missing\\n");
 
           \t\tgui_msg("b2q_keystore_start=[b2q] KEYSTORE2 RESTART");
           \t\tandroid::base::SetProperty("ctl.stop", "keystore2");
@@ -716,6 +713,9 @@ jobs:
           grep -Fq 'SPU PREFLIGHT START' gui/action.cpp
           grep -Fq 'SPU FIRMWARE FIND OK' gui/action.cpp
           grep -Fq 'SP APP SIGNATURES READY' gui/action.cpp
+          grep -Fq 'SP KEYMASTER PRECHECK=missing - CONTINUE' gui/action.cpp
+          grep -Fq 'SPU STACK READY FOR KEYMASTER CLIENT' gui/action.cpp
+          grep -Fq 'SP KEYMASTER POSTCHECK=' gui/action.cpp
           grep -Fq 'b2q-spu-firmware-probe.sh' gui/action.cpp
           grep -Fq 'b2q-sp-app-probe.sh' gui/action.cpp
           test -f "$DEVICE/recovery/root/system/bin/b2q-sp-app-probe.sh"
@@ -782,7 +782,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6z SP app signatures + sec_nvm-first verified'
+          echo '[b2q] test6aa Keymaster-initiated SPCom client verified'
 
       - name: Build recovery.img
         shell: bash
@@ -819,28 +819,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6z package
+      - name: Build Odin test6aa package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6z-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6aa-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6z artifact
+      - name: Upload test6aa artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-sp-app-signatures-test6z-${{ github.sha }}
+          name: TWRP-b2q-keymaster-client-test6aa-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6z-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6z-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6aa-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6aa-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
