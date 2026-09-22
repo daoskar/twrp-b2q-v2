@@ -766,11 +766,12 @@ jobs:
           grep -Fq 'SEC_NVM FIRST START' gui/action.cpp
           grep -Fq 'SEC_NVM ARMED' gui/action.cpp
           grep -Fq 'SPDAEMON AFTER NVM START' gui/action.cpp
-          test -f "$DEVICE/sp_loader/Android.mk"
-          test -f "$DEVICE/sp_loader/b2q-sp-loader.c"
-          grep -Fq 'LOCAL_MODULE := b2q-sp-loader' "$DEVICE/sp_loader/Android.mk"
-          grep -Fq 'spcom_load_app' "$DEVICE/sp_loader/b2q-sp-loader.c"
-          grep -Fq 'spcom_is_app_loaded' "$DEVICE/sp_loader/b2q-sp-loader.c"
+          test -f "$DEVICE/recovery/sp_loader/Android.bp"
+          test -f "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq 'name: "b2q-sp-loader"' "$DEVICE/recovery/sp_loader/Android.bp"
+          grep -Fq 'spcom_is_sp_subsystem_link_up' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq 'spcom_load_app' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq 'spcom_is_app_loaded' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
           ! grep -Fq 'SP KEYMASTER CHANNEL FAIL' gui/action.cpp
           grep -Fq 'SetProperty("ctl.start", "vendor.sec_nvm")' gui/action.cpp
           grep -Fq 'SetProperty("ctl.start", "vendor.spdaemon")' gui/action.cpp
