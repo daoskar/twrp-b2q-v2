@@ -1,13 +1,13 @@
-name: Build TWRP b2q forced SP apps test6ac
+name: Build TWRP b2q forced SP apps test6ad
 
 on:
   push:
     branches:
-      - test6ac-wait-spu-keymaster
+      - test6ad-wait-uefi-channels
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6ac-${{ github.ref }}
+  group: twrp-b2q-test6ad-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6ac device tree
+      - name: Checkout test6ad device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -571,10 +571,10 @@ jobs:
           \t\t\treturn 0;
           \t\t}
 
-          \t\t// test6ac: SM8350 UEFI owns asym_cryptoapp/cryptoapp/sp_keymaster.
-          \t\t// Do not race spdaemon by re-loading asym/crypto as soon as the
-          \t\t// transport link appears. The helper waits for full SPU-ready,
-          \t\t// then only attempts to recover sp_keymaster if it is still absent.
+          \t\t// test6ad: SM8350 UEFI owns asym_cryptoapp/cryptoapp/sp_keymaster.
+          \t\t// Global spcom_wait_for_spu_ready may never be signalled in recovery,
+          \t\t// even while UEFI channels are becoming available. Synchronize on
+          \t\t// the real cryptoapp node, then recover only sp_keymaster if needed.
           \t\tgui_print("[b2q] FORCE SP APPS START\\n");
           \t\tstd::string sp_force_diag;
           \t\tint sp_force_rc = TWFunc::Exec_Cmd(
@@ -586,7 +586,13 @@ jobs:
           \t\t\t"[ -x /system/bin/b2q-sp-loader ] || exit 71; "
           \t\t\t"[ -r \\\"$KM\\\" ] || exit 73; "
           \t\t\t"echo precheck_nodes; ls -l /dev/asym_cryptoapp /dev/cryptoapp /dev/sp_keymaster 2>&1 || true; "
-          \t\t\t"LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin /system/bin/b2q-sp-loader sp_keymaster \\\"$KM\\\" 262144 || exit 75; "
+          \t\t\t"I=0; while [ ! -e /dev/cryptoapp ] && [ $I -lt 70 ]; do sleep 1; I=$((I+1)); done; "
+          \t\t\t"if [ ! -e /dev/cryptoapp ]; then echo cryptoapp_node=timeout; exit 74; fi; "
+          \t\t\t"echo cryptoapp_node=ready_after_${I}s; "
+          \t\t\t"J=0; while [ ! -e /dev/sp_keymaster ] && [ $J -lt 15 ]; do sleep 1; J=$((J+1)); done; "
+          \t\t\t"if [ -e /dev/sp_keymaster ]; then echo sp_keymaster_node=uefi_ready_after_${J}s; "
+          \t\t\t"else echo sp_keymaster_node=missing_after_${J}s_manual_load; "
+          \t\t\t"LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin /system/bin/b2q-sp-loader sp_keymaster \\\"$KM\\\" 262144 || exit 75; fi; "
           \t\t\t"echo postcheck_nodes; ls -l /dev/asym_cryptoapp /dev/cryptoapp /dev/sp_keymaster 2>&1 || true; "
           \t\t\t"if [ -e /dev/sp_keymaster ]; then echo sp_keymaster_node=present; else echo sp_keymaster_node=pending; fi",
           \t\t\tsp_force_diag, true);
@@ -750,6 +756,8 @@ jobs:
           grep -Fq 'SP KEYMASTER CHANNEL READY' gui/action.cpp
           grep -Fq 'b2q-sp-loader' gui/action.cpp
           grep -Fq 'sp_keymaster' gui/action.cpp
+          grep -Fq 'cryptoapp_node=ready_after_' gui/action.cpp
+          grep -Fq 'sp_keymaster_node=missing_after_' gui/action.cpp
           grep -Fq 'b2q-spu-firmware-probe.sh' gui/action.cpp
           grep -Fq 'b2q-sp-app-probe.sh' gui/action.cpp
           test -f "$DEVICE/recovery/root/system/bin/b2q-sp-app-probe.sh"
@@ -769,7 +777,6 @@ jobs:
           test -f "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
           grep -Fq 'name: "b2q-sp-loader"' "$DEVICE/recovery/sp_loader/Android.bp"
           grep -Fq 'spcom_is_sp_subsystem_link_up' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
-          grep -Fq 'spcom_wait_for_spu_ready' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
           grep -Fq 'spcom_load_app' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
           grep -Fq 'spcom_is_app_loaded' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
           ! grep -Fq 'SP KEYMASTER CHANNEL FAIL' gui/action.cpp
@@ -822,7 +829,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6ac forced SP app load verified'
+          echo '[b2q] test6ad forced SP app load verified'
 
       - name: Build recovery.img
         shell: bash
@@ -862,28 +869,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6ac package
+      - name: Build Odin test6ad package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6ac-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6ad-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6ac artifact
+      - name: Upload test6ad artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-force-sp-apps-test6ac-${{ github.sha }}
+          name: TWRP-b2q-force-sp-apps-test6ad-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6ac-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6ac-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6ad-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6ad-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
