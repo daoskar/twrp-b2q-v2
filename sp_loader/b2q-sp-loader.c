@@ -93,8 +93,24 @@ int main(int argc, char **argv) {
 
     printf("[b2q-sp-loader] channel=%s image=%s swap=%u\n",
            channel, image, swap_size);
+
     if (link_up != NULL) {
-        printf("[b2q-sp-loader] link_up=%d\n", link_up() ? 1 : 0);
+        bool up = false;
+        for (int i = 0; i < 1000; ++i) {
+            if (link_up()) {
+                printf("[b2q-sp-loader] SPSS link up after %d ms\n", i * 10);
+                up = true;
+                break;
+            }
+            sleep_ms(10);
+        }
+        if (!up) {
+            fprintf(stderr, "[b2q-sp-loader] SPSS link did not come up\n");
+            dlclose(handle);
+            return 70;
+        }
+    } else {
+        printf("[b2q-sp-loader] link-up symbol unavailable; continuing\n");
     }
 
     if (app_loaded(is_loaded, channel)) {
