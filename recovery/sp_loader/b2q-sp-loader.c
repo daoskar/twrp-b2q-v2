@@ -7,7 +7,8 @@
 
 typedef bool (*spcom_is_app_loaded_fn)(const char *);
 typedef bool (*spcom_is_sp_subsystem_link_up_fn)(void);
-typedef int (*spcom_load_app_fn)(const char *, const char *, int);
+typedef int (*spcom_wait_for_spu_ready_fn)(unsigned int);
+typedef int (*spcom_load_app_fn)(const char *, const char *, size_t);
 
 static int wait_link(spcom_is_sp_subsystem_link_up_fn is_link_up, int timeout_ms) {
     for (int elapsed = 0; elapsed < timeout_ms; elapsed += 50) {
@@ -47,6 +48,8 @@ int main(int argc, char **argv) {
         (spcom_is_app_loaded_fn)dlsym(h, "spcom_is_app_loaded");
     spcom_is_sp_subsystem_link_up_fn is_link_up =
         (spcom_is_sp_subsystem_link_up_fn)dlsym(h, "spcom_is_sp_subsystem_link_up");
+    spcom_wait_for_spu_ready_fn wait_spu_ready =
+        (spcom_wait_for_spu_ready_fn)dlsym(h, "spcom_wait_for_spu_ready");
     spcom_load_app_fn load_app =
         (spcom_load_app_fn)dlsym(h, "spcom_load_app");
 
@@ -67,15 +70,37 @@ int main(int argc, char **argv) {
     }
     printf("[b2q-sp-loader] SP link ready\n");
 
-    if (is_loaded(channel)) {
+    if (wait_spu_ready) {
+        int ready_rc = wait_spu_ready(45);
+        printf("[b2q-sp-loader] spcom_wait_for_spu_ready rc=%d", ready_rc);
+        if (ready_rc < 0 && -ready_rc > 0 && -ready_rc < 256)
+            printf(" (%s)", strerror(-ready_rc));
+        printf("\n");
+        if (ready_rc < 0) {
+            dlclose(h);
+            return 70;
+        }
+    } else {
+        printf("[b2q-sp-loader] spcom_wait_for_spu_ready symbol missing; using link-ready fallback\n");
+    }
+
+    if (wait_app(is_loaded, channel, 3000) == 0) {
         printf("[b2q-sp-loader] %s already loaded\n", channel);
         dlclose(h);
         return 0;
     }
 
-    int rc = load_app(channel, sig_path, swap_size);
-    printf("[b2q-sp-loader] spcom_load_app(%s) rc=%d\n", channel, rc);
+    int rc = load_app(channel, sig_path, (size_t)swap_size);
+    printf("[b2q-sp-loader] spcom_load_app(%s) rc=%d", channel, rc);
+    if (rc < 0 && -rc > 0 && -rc < 256)
+        printf(" (%s)", strerror(-rc));
+    printf("\n");
     if (rc < 0) {
+        if (wait_app(is_loaded, channel, 5000) == 0) {
+            printf("[b2q-sp-loader] %s appeared after load error; treating as ready\n", channel);
+            dlclose(h);
+            return 0;
+        }
         dlclose(h);
         return 68;
     }
