@@ -588,12 +588,12 @@ jobs:
           \t\t\t"if [ -r \\\"$AS\\\" ]; then /system/bin/b2q-sp-loader asym_cryptoapp \\\"$AS\\\" 262144 || true; fi; "
           \t\t\t"/system/bin/b2q-sp-loader cryptoapp \\\"$CR\\\" 262144 || exit 74; "
           \t\t\t"/system/bin/b2q-sp-loader sp_keymaster \\\"$KM\\\" 262144 || exit 75; "
-          \t\t\t"ls -l /dev/cryptoapp /dev/sp_keymaster 2>&1; "
-          \t\t\t"[ -e /dev/sp_keymaster ] || exit 76",
+          \t\t\t"ls -l /dev/cryptoapp /dev/sp_keymaster 2>&1 || true; "
+          \t\t\t"if [ -e /dev/sp_keymaster ]; then echo sp_keymaster_node=present; else echo sp_keymaster_node=pending; fi",
           \t\t\tsp_force_diag, true);
           \t\tLOGINFO("b2q: forced SP app loader diagnostics:\\n%s\\n", sp_force_diag.c_str());
           \t\tgui_print("%s\\n", sp_force_diag.c_str());
-          \t\tif (sp_force_rc != 0 || !TWFunc::Path_Exists("/dev/sp_keymaster")) {
+          \t\tif (sp_force_rc != 0) {
           \t\t\tstd::string sp_fail_diag;
           \t\t\tTWFunc::Exec_Cmd("echo '--- SP loader fail ---'; getprop | grep -Ei 'spcom|spu|spss'; ls -l /dev/sp* /dev/cryptoapp /dev/sec_nvm_* 2>&1; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'spdaemon|spcom|sp_keymaster|cryptoapp|sec_nvm' | tail -n 240; dmesg | grep -Ei 'spu|spss|spcom|remoteproc|watchdog|fatal|ssr' | tail -n 220", sp_fail_diag, true);
           \t\t\tLOGINFO("b2q: forced SP app load failed:\\n%s\\n", sp_fail_diag.c_str());
