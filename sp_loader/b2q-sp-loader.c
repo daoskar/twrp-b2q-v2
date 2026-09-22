@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -5,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef int (*spcom_load_app_fn)(const char *ch_name, const char *file_path,
@@ -18,6 +20,15 @@ static void copy_symbol(void *handle, const char *name, void *out, size_t out_si
     if (sym != NULL) {
         const size_t n = out_size < sizeof(sym) ? out_size : sizeof(sym);
         memcpy(out, &sym, n);
+    }
+}
+
+static void sleep_ms(long milliseconds) {
+    struct timespec req = {
+        .tv_sec = milliseconds / 1000,
+        .tv_nsec = (milliseconds % 1000) * 1000000L,
+    };
+    while (nanosleep(&req, &req) != 0 && errno == EINTR) {
     }
 }
 
@@ -111,7 +122,7 @@ int main(int argc, char **argv) {
             dlclose(handle);
             return 0;
         }
-        usleep(10000);
+        sleep_ms(10);
     }
 
     fprintf(stderr,
