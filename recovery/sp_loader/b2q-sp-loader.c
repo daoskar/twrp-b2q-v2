@@ -84,8 +84,7 @@ int main(int argc, char **argv) {
         printf(" (%s)", strerror(-ready_rc));
     printf("\n");
     if (ready_rc < 0) {
-        dlclose(h);
-        return 70;
+        printf("[b2q-sp-loader] SPU-ready timed out; link is up, continuing with direct app load\n");
     }
 
     if (wait_app(is_loaded, channel, 1000) == 0) {
@@ -94,7 +93,10 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    printf("[b2q-sp-loader] stock SPU sequence completed without %s; forcing app load\n", channel);
+    if (ready_rc < 0)
+        printf("[b2q-sp-loader] forcing %s load despite SPU-ready timeout\n", channel);
+    else
+        printf("[b2q-sp-loader] stock SPU sequence completed without %s; forcing app load\n", channel);
     int rc = load_app(channel, sig_path, (size_t)swap_size);
     printf("[b2q-sp-loader] spcom_load_app(%s) rc=%d", channel, rc);
     if (rc < 0 && -rc > 0 && -rc < 256)
