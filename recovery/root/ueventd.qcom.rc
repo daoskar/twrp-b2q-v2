@@ -30,6 +30,7 @@ subsystem sound
 /dev/hwbinder             0666   root       root
 /dev/vndbinder            0666   root       root
 /dev/pmsg0                0222   root       log
+/dev/ion                  0664   system     system
 /dev/dri/*                0666   root       graphics
 /dev/uhid                 0660   uhid       uhid
 /dev/uinput               0660   uhid       uhid
