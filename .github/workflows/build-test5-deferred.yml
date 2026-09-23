@@ -517,6 +517,17 @@ jobs:
           \t\tgui_print("[b2q] SPU PREFLIGHT START\\n");
           \t\tTWFunc::Recursive_Mkdir("/mnt/vendor/persist");
           \t\tTWFunc::Recursive_Mkdir("/spu");
+
+          \t\t// postrecoveryboot.sh marks partitions not on its allowlist read-only.
+          \t\t// sec_nvm needs persist writable, so undo only that block-device flag
+          \t\t// immediately before mounting persist for the SPU stack.
+          \t\tif (TWFunc::Exec_Cmd("blockdev --setrw /dev/block/bootdevice/by-name/persist && [ \\"$(blockdev --getro /dev/block/bootdevice/by-name/persist)\\" = 0 ]", false) != 0) {
+          \t\t\tgui_print_color("error", "[b2q] PERSIST BLOCKDEV RW FAIL\\n");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_print("[b2q] PERSIST BLOCKDEV RW READY\\n");
+
           \t\tif (TWFunc::Exec_Cmd("mountpoint -q /mnt/vendor/persist || mount -t ext4 -o rw,noatime,nosuid,nodev /dev/block/bootdevice/by-name/persist /mnt/vendor/persist", false) != 0) {
           \t\t\tgui_print_color("error", "[b2q] PERSIST DIRECT MOUNT FAIL\\n");
           \t\t\toperation_end(1);
@@ -768,6 +779,7 @@ jobs:
           grep -Fq 'VENDOR MOUNT START' gui/action.cpp
           grep -Fq 'PREVIOUS CRASH PSTORE FOUND' gui/action.cpp
           grep -Fq 'SPU PREFLIGHT START' gui/action.cpp
+          grep -Fq 'PERSIST BLOCKDEV RW READY' gui/action.cpp
           grep -Fq 'SPU FIRMWARE FIND OK' gui/action.cpp
           grep -Fq 'SP APP SIGNATURES READY' gui/action.cpp
           grep -Fq 'STOCK SPU ORDER START' gui/action.cpp
