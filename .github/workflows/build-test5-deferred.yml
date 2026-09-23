@@ -1,13 +1,13 @@
-name: Build TWRP b2q forced SP apps test6af
+name: Build TWRP b2q forced keymaster app test6ag
 
 on:
   push:
     branches:
-      - test6af-stock-spu-order
+      - test6ag-force-keymaster-app
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6af-${{ github.ref }}
+  group: twrp-b2q-test6ag-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6af device tree
+      - name: Checkout test6ag device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -608,26 +608,36 @@ jobs:
           \t\t}
           \t\tgui_print("[b2q] SEC_NVM RUNNING\\n");
 
-          \t\tstd::string stock_spu_diag;
-          \t\tint stock_spu_rc = TWFunc::Exec_Cmd(
-          \t\t\t"I=0; while [ ! -e /dev/sp_keymaster ] && [ $I -lt 90 ]; do sleep 1; I=$((I+1)); done; "
-          \t\t\t"echo stock_wait_sp_keymaster=${I}s; "
-          \t\t\t"echo stock_nodes; ls -l /dev/asym_cryptoapp /dev/cryptoapp /dev/sp_keymaster /dev/sec_nvm_* /dev/spdaemon_ssr 2>&1 || true; "
-          \t\t\t"echo stock_props; getprop | grep -Ei 'spcom|spu|spss|keymaster.strongbox|init.svc.vendor.(spdaemon|sec_nvm|keymaster-sb)' || true; "
-          \t\t\t"if [ -e /dev/sp_keymaster ]; then exit 0; else exit 79; fi",
-          \t\t\tstock_spu_diag, true);
-          \t\tLOGINFO("b2q: stock SPU ordering diagnostics:\\n%s\\n", stock_spu_diag.c_str());
-          \t\tgui_print("%s\\n", stock_spu_diag.c_str());
+          \t\t// test6ag: on SM8350 stock spdaemon treats keymaster as a UEFI app.
+          \t\t// If recovery lost that UEFI-loaded app, spdaemon updates status but
+          \t\t// deliberately does not call spcom_load_app() for sp_keymaster.
+          \t\t// Our loader waits for spdaemon's SPU-ready event first, then forces
+          \t\t// the exact keym*.sig selected by b2q-sp-app-probe.sh.
+          \t\tgui_print("[b2q] FORCED KEYMASTER APP TEST START\\n");
+          \t\tstd::string forced_km_diag;
+          \t\tint forced_km_rc = TWFunc::Exec_Cmd(
+          \t\t\t"KM_SIG=$(cat /tmp/b2q-sp-keymaster-sig 2>/dev/null); "
+          \t\t\t"echo forced_keymaster_sig=$KM_SIG; "
+          \t\t\t"if [ -z \\"$KM_SIG\\" ] || [ ! -r \\"$KM_SIG\\" ]; then echo forced_keymaster_sig_unreadable; exit 80; fi; "
+          \t\t\t"/system/bin/b2q-sp-loader sp_keymaster \\"$KM_SIG\\" 262144; RC=$?; "
+          \t\t\t"echo forced_keymaster_loader_rc=$RC; "
+          \t\t\t"echo forced_nodes; ls -l /dev/asym_cryptoapp /dev/cryptoapp /dev/sp_keymaster /dev/sec_nvm_* /dev/spdaemon_ssr 2>&1 || true; "
+          \t\t\t"echo forced_props; getprop | grep -Ei 'spcom|spu|spss|keymaster.strongbox|init.svc.vendor.(spdaemon|sec_nvm|keymaster-sb)' || true; "
+          \t\t\t"exit $RC",
+          \t\t\tforced_km_diag, true);
+          \t\tLOGINFO("b2q: forced keymaster SP app diagnostics:\\n%s\\n", forced_km_diag.c_str());
+          \t\tgui_print("%s\\n", forced_km_diag.c_str());
 
-          \t\tif (stock_spu_rc != 0 || !TWFunc::Path_Exists("/dev/sp_keymaster")) {
+          \t\tif (forced_km_rc != 0 || !TWFunc::Path_Exists("/dev/sp_keymaster")) {
           \t\t\tstd::string sp_fail_diag;
-          \t\t\tTWFunc::Exec_Cmd("echo '--- stock-order SP keymaster failure ---'; /system/bin/sh /system/bin/b2q-security-diag.sh; echo '--- strongbox ---'; getprop | grep -Ei 'keymaster-sb|strongbox'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'spdaemon|spcom|sp_keymaster|cryptoapp|sec_nvm|strongbox|keymaster' | tail -n 360; dmesg | grep -Ei 'spu|spss|spcom|remoteproc|watchdog|fatal|ssr' | tail -n 300", sp_fail_diag, true);
-          \t\t\tLOGINFO("b2q: stock-order SP keymaster still missing:\\n%s\\n", sp_fail_diag.c_str());
-          \t\t\tgui_print_color("error", "[b2q] SP KEYMASTER MISSING WITH STOCK ORDER\\n");
+          \t\t\tTWFunc::Exec_Cmd("echo '--- forced SP keymaster failure ---'; /system/bin/sh /system/bin/b2q-security-diag.sh; echo '--- keymaster sig ---'; cat /tmp/b2q-sp-keymaster-sig 2>/dev/null; ls -l /vendor/firmware_mnt/image/keym*.sig 2>&1; echo '--- strongbox ---'; getprop | grep -Ei 'keymaster-sb|strongbox'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'spdaemon|spcom|sp_keymaster|cryptoapp|sec_nvm|strongbox|keymaster|nvm_ready|spu_ready' | tail -n 420; dmesg | grep -Ei 'spu|spss|spcom|remoteproc|watchdog|fatal|ssr' | tail -n 340", sp_fail_diag, true);
+          \t\t\tLOGINFO("b2q: forced keymaster SP app failed:\\n%s\\n", sp_fail_diag.c_str());
+          \t\t\tgui_print_color("error", "[b2q] FORCED SP KEYMASTER LOAD FAIL\\n");
           \t\t\tgui_print("%s\\n", sp_fail_diag.c_str());
           \t\t\toperation_end(1);
           \t\t\treturn 0;
           \t\t}
+          \t\tgui_print("[b2q] FORCED SP KEYMASTER LOAD OK\\n");
           \t\tgui_print("[b2q] SP KEYMASTER CHANNEL READY\\n");
 
           \t\tgui_msg("b2q_keymaster_dir_start=[b2q] KEYMASTER DIR START");
@@ -780,7 +790,9 @@ jobs:
           grep -Fq 'vendor.keymaster.strongbox.version' gui/action.cpp
           grep -Fq 'sp_keymaster' gui/action.cpp
           grep -Fq 'SPDAEMON RUNNING - START SEC_NVM NOW' gui/action.cpp
-          grep -Fq 'SP KEYMASTER MISSING WITH STOCK ORDER' gui/action.cpp
+          grep -Fq 'FORCED KEYMASTER APP TEST START' gui/action.cpp
+          grep -Fq 'FORCED SP KEYMASTER LOAD OK' gui/action.cpp
+          grep -Fq 'b2q-sp-loader sp_keymaster' gui/action.cpp
           grep -Fq 'b2q-spu-firmware-probe.sh' gui/action.cpp
           grep -Fq 'b2q-sp-app-probe.sh' gui/action.cpp
           test -f "$DEVICE/recovery/root/system/bin/b2q-sp-app-probe.sh"
@@ -798,6 +810,8 @@ jobs:
           grep -Fq 'name: "b2q-sp-loader"' "$DEVICE/recovery/sp_loader/Android.bp"
           grep -Fq 'spcom_is_sp_subsystem_link_up' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
           grep -Fq 'spcom_load_app' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq 'spcom_wait_for_spu_ready' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq '/tmp/b2q-sp-keymaster-sig' "$DEVICE/recovery/root/system/bin/b2q-sp-app-probe.sh"
           grep -Fq 'spcom_is_app_loaded' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
           ! grep -Fq 'SP KEYMASTER CHANNEL FAIL' gui/action.cpp
           grep -Fq 'SetProperty("ctl.start", "vendor.sec_nvm")' gui/action.cpp
@@ -849,7 +863,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6af stock SPU order + StrongBox v4.0 flow verified'
+          echo '[b2q] test6ag stock SPU-ready + forced keymaster app flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -889,28 +903,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6af package
+      - name: Build Odin test6ag package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6af-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6ag-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6af artifact
+      - name: Upload test6ag artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-force-sp-apps-test6af-${{ github.sha }}
+          name: TWRP-b2q-force-keymaster-app-test6ag-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6af-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6af-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6ag-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6ag-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
