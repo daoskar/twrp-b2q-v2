@@ -1,13 +1,13 @@
-name: Build TWRP b2q forced keymaster app after timeout test6ah
+name: Build TWRP b2q ION access + forced keymaster app test6ai
 
 on:
   push:
     branches:
-      - test6ah-force-load-after-timeout
+      - test6ai-ion-access
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6ah-${{ github.ref }}
+  group: twrp-b2q-test6ai-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6ah device tree
+      - name: Checkout test6ai device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -222,6 +222,8 @@ jobs:
           grep -Fq '/dev/sp_kernel            0660   system     system' recovery/root/vendor/etc/ueventd.rc
           grep -Fq '/dev/sp_keymaster         0660   system     system' recovery/root/vendor/etc/ueventd.rc
           grep -Fq '/dev/qsee_ipc_irq_spss    0660   system     drmrpc' recovery/root/vendor/etc/ueventd.rc
+          grep -Fq '/dev/ion                  0664   system     system' recovery/root/vendor/etc/ueventd.rc
+          grep -Fq '/dev/ion                  0664   system     system' recovery/root/ueventd.qcom.rc
           test -f recovery/root/system/bin/b2q-security-diag.sh
           bash -n recovery/root/system/bin/b2q-security-diag.sh
           grep -Fq 'stdio_to_kmsg' recovery/root/init.recovery.qcom.rc
@@ -608,7 +610,7 @@ jobs:
           \t\t}
           \t\tgui_print("[b2q] SEC_NVM RUNNING\\n");
 
-          \t\t// test6ah: on SM8350 stock spdaemon treats keymaster as a UEFI app.
+          \t\t// test6ai: on SM8350 stock spdaemon treats keymaster as a UEFI app.
           \t\t// If recovery lost that UEFI-loaded app, spdaemon updates status but
           \t\t// deliberately does not call spcom_load_app() for sp_keymaster.
           \t\t// Our loader waits for spdaemon's SPU-ready event first, then forces
@@ -753,6 +755,24 @@ jobs:
               raise SystemExit(f'portrait.xml expected exactly 1 Mount storage selector, got {text.count(mount_selector)}')
           portrait.write_text(text.replace(mount_selector, button + mount_selector, 1))
 
+          # test6ai: expose the exact legacy ION node state immediately before
+          # the SPU stack is exercised. sec_nvm/libspcom requires /dev/ion.
+          action = root / 'gui/action.cpp'
+          t = action.read_text()
+          ion_anchor = '\\t\\tgui_print("[b2q] STOCK SPU ORDER START\\\\n");\\n'
+          ion_new = (
+              '\\t\\tgui_print("[b2q] STOCK SPU ORDER START\\\\n");\\n'
+              '\\t\\t{\\n'
+              '\\t\\t\\tstd::string b2q_ion_diag;\\n'
+              '\\t\\t\\tTWFunc::Exec_Cmd("echo -n \\\'ION DEVICE=\\\'; ls -l /dev/ion 2>&1; '
+              'echo \\\'--- dma heaps ---\\\'; ls -l /dev/dma_heap 2>&1 || true", b2q_ion_diag, true);\\n'
+              '\\t\\t\\tgui_print("%s\\\\n", b2q_ion_diag.c_str());\\n'
+              '\\t\\t}\\n'
+          )
+          if t.count(ion_anchor) != 1:
+              raise SystemExit(f'action.cpp ION diagnostic anchor count={t.count(ion_anchor)}')
+          action.write_text(t.replace(ion_anchor, ion_new, 1))
+
           # test6l: custom b2q checkpoints are literal console messages, not
           # translation resource keys. This removes the noisy
           # "String resource ... not found" lines seen on-device.
@@ -790,6 +810,7 @@ jobs:
           grep -Fq 'vendor.keymaster.strongbox.version' gui/action.cpp
           grep -Fq 'sp_keymaster' gui/action.cpp
           grep -Fq 'SPDAEMON RUNNING - START SEC_NVM NOW' gui/action.cpp
+          grep -Fq 'ION DEVICE=' gui/action.cpp
           grep -Fq 'FORCED KEYMASTER APP TEST START' gui/action.cpp
           grep -Fq 'FORCED SP KEYMASTER LOAD OK' gui/action.cpp
           grep -Fq 'b2q-sp-loader sp_keymaster' gui/action.cpp
@@ -865,7 +886,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6ah stock SPU-ready + forced keymaster app after timeout flow verified'
+          echo '[b2q] test6ai stock SPU-ready + ION access + forced keymaster app flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -905,28 +926,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6ah package
+      - name: Build Odin test6ai package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6ah-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6ai-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6ah artifact
+      - name: Upload test6ai artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-force-keymaster-app-test6ah-${{ github.sha }}
+          name: TWRP-b2q-force-keymaster-app-test6ai-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6ah-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6ah-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6ai-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6ai-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
