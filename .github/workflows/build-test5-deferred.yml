@@ -759,7 +759,7 @@ jobs:
           # the SPU stack is exercised. sec_nvm/libspcom requires /dev/ion.
           action = root / 'gui/action.cpp'
           t = action.read_text()
-          ion_anchor = '\\t\\tgui_print("[b2q] STOCK SPU ORDER START\\\\n");\\n'
+          ion_anchor = '\t\tgui_print("[b2q] STOCK SPU ORDER START\\n");\n'
           ion_new = (
               '\\t\\tgui_print("[b2q] STOCK SPU ORDER START\\\\n");\\n'
               '\\t\\t{\\n'
