@@ -388,7 +388,7 @@ jobs:
           action = root / 'gui/action.cpp'
           text = action.read_text()
           include_old = '#include <android-base/properties.h>\n'
-          include_new = '#include <android-base/properties.h>\n#include <android/hardware/keymaster/4.0/IKeymasterDevice.h>\n'
+          include_new = '#include <android-base/properties.h>\n#include <android/hardware/keymaster/4.0/IKeymasterDevice.h>\n#include <algorithm>\n'
           if text.count(include_old) != 1:
               raise SystemExit(f'action.cpp keymaster include anchor count={text.count(include_old)}')
           text = text.replace(include_old, include_new, 1)
