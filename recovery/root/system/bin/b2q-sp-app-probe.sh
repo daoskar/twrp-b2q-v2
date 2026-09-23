@@ -70,6 +70,10 @@ ASYM_SRC="$(find_one "$ASYM")"
 [ -n "$CRYPT_SRC" ] || exit 44
 
 TARGET=/vendor/firmware_mnt/image
+# test6ag consumes this exact, firmware-derived path after stock spdaemon
+# finishes its SPU-ready sequence. Never guess between keym*.sig variants.
+printf '%s\n' "$TARGET/$KEYM" > /tmp/b2q-sp-keymaster-sig
+
 if [ "$KEYM_SRC" = "$TARGET/$KEYM" ] && [ "$CRYPT_SRC" = "$TARGET/$CRYPT" ]; then
     log "SP app signatures already in expected path"
     exit 0
