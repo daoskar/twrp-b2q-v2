@@ -161,24 +161,14 @@ jobs:
               stdio_to_kmsg
               seclabel u:r:recovery:s0
 
-          # b2q test6af: QTI SM8350 init.qti.keymaster.sh starts these
-          # before the post-fs SPU stack. Keep them restartable like stock.
+          # b2q test6af: QTI SM8350 exposes StrongBox as an early HAL.
+          # Stock init.qti.keymaster.sh selects StrongBox v4.0 for SM8350.
           service vendor.keymaster-sb-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-strongbox-service-qti
               override
               interface android.hardware.keymaster@4.0::IKeymasterDevice strongbox
               class early_hal
               user system
               group system drmrpc
-              setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
-              disabled
-              stdio_to_kmsg
-              seclabel u:r:recovery:s0
-
-          service vendor.authsecret.qti-1-0 /vendor/bin/hw/android.hardware.authsecret@1.0-service-qti
-              override
-              class hal
-              user system
-              group system
               setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin
               disabled
               stdio_to_kmsg
@@ -208,7 +198,7 @@ jobs:
               seclabel u:r:recovery:s0
           EOF
           grep -Fq 'service vendor.qseecomd /vendor/bin/qseecomd' recovery/root/init.recovery.qcom.rc
-          test "$(grep -Fc '    override' recovery/root/init.recovery.qcom.rc)" -eq 6
+          test "$(grep -Fc '    override' recovery/root/init.recovery.qcom.rc)" -eq 5
           grep -A8 -F 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc | grep -Fq 'shutdown critical'
           ! grep -A10 -F 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc | grep -Fq 'oneshot'
           ! grep -A10 -F 'service vendor.sec_nvm /vendor/bin/sec_nvm' recovery/root/init.recovery.qcom.rc | grep -Fq 'oneshot'
@@ -218,7 +208,6 @@ jobs:
           grep -Fq 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc
           grep -Fq 'service vendor.sec_nvm /vendor/bin/sec_nvm' recovery/root/init.recovery.qcom.rc
           grep -Fq 'service vendor.keymaster-sb-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-strongbox-service-qti' recovery/root/init.recovery.qcom.rc
-          grep -Fq 'service vendor.authsecret.qti-1-0 /vendor/bin/hw/android.hardware.authsecret@1.0-service-qti' recovery/root/init.recovery.qcom.rc
           grep -Fq 'setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib:/sbin' recovery/root/init.recovery.qcom.rc
           test -f recovery/root/vendor/etc/ueventd.rc
           UEVENTD=recovery/root/vendor/etc/ueventd.rc
@@ -571,29 +560,30 @@ jobs:
           \t\t}
           \t\tgui_print("[b2q] SP APP SIGNATURES READY\\n");
 
-          \t\t// test6af: restore the stock SM8350 order. QTI starts
-          \t\t// StrongBox/AuthSecret early, then post-fs starts spdaemon first
-          \t\t// and sec_nvm immediately after it. spdaemon waits for NVM-ready.
+          \t\t// test6af: restore the stock SM8350 sequence. Qualcomm's
+          \t\t// init.qti.keymaster.sh sets StrongBox v4.0 on SM8350 before
+          \t\t// the early HAL starts; post-fs then starts spdaemon -> sec_nvm.
           \t\tgui_print("[b2q] STOCK SPU ORDER START\\n");
 
-          \t\tbool have_sb = TWFunc::Path_Exists("/vendor/bin/hw/android.hardware.keymaster@4.0-strongbox-service-qti");
-          \t\tbool have_authsecret = TWFunc::Path_Exists("/vendor/bin/hw/android.hardware.authsecret@1.0-service-qti");
-          \t\tgui_print("[b2q] STRONGBOX BINARY=%s AUTHSECRET BINARY=%s\\n",
-          \t\t\thave_sb ? "present" : "missing", have_authsecret ? "present" : "missing");
+          \t\tstd::string soc_id_diag;
+          \t\tTWFunc::Exec_Cmd("cat /sys/devices/soc0/soc_id 2>/dev/null || cat /sys/devices/system/soc/soc0/id 2>/dev/null || true", soc_id_diag, true);
+          \t\tsoc_id_diag.erase(std::remove(soc_id_diag.begin(), soc_id_diag.end(), '\\n'), soc_id_diag.end());
+          \t\tgui_print("[b2q] SOC_ID=%s\\n", soc_id_diag.c_str());
 
+          \t\t// b2q is SM8350. This is the exact property selected by QTI's
+          \t\t// init.qti.keymaster.sh for SM8350 soc_id 415/439/456.
+          \t\tandroid::base::SetProperty("vendor.keymaster.strongbox.version", "40");
+          \t\tgui_print("[b2q] STRONGBOX VERSION=%s\\n",
+          \t\t\tandroid::base::GetProperty("vendor.keymaster.strongbox.version", "missing").c_str());
+
+          \t\tbool have_sb = TWFunc::Path_Exists("/vendor/bin/hw/android.hardware.keymaster@4.0-strongbox-service-qti");
+          \t\tgui_print("[b2q] STRONGBOX BINARY=%s\\n", have_sb ? "present" : "missing");
           \t\tif (have_sb) {
           \t\t\tandroid::base::SetProperty("ctl.start", "vendor.keymaster-sb-4-0");
           \t\t\tfor (int i = 0; i < 30 && android::base::GetProperty("init.svc.vendor.keymaster-sb-4-0", "") != "running"; ++i)
           \t\t\t\tusleep(100000);
           \t\t\tgui_print("[b2q] STRONGBOX STATE=%s\\n",
           \t\t\t\tandroid::base::GetProperty("init.svc.vendor.keymaster-sb-4-0", "unknown").c_str());
-          \t\t}
-          \t\tif (have_authsecret) {
-          \t\t\tandroid::base::SetProperty("ctl.start", "vendor.authsecret.qti-1-0");
-          \t\t\tfor (int i = 0; i < 30 && android::base::GetProperty("init.svc.vendor.authsecret.qti-1-0", "") != "running"; ++i)
-          \t\t\t\tusleep(100000);
-          \t\t\tgui_print("[b2q] AUTHSECRET STATE=%s\\n",
-          \t\t\t\tandroid::base::GetProperty("init.svc.vendor.authsecret.qti-1-0", "unknown").c_str());
           \t\t}
 
           \t\tgui_print("[b2q] SPDAEMON STOCK FIRST START\\n");
@@ -623,7 +613,7 @@ jobs:
           \t\t\t"I=0; while [ ! -e /dev/sp_keymaster ] && [ $I -lt 90 ]; do sleep 1; I=$((I+1)); done; "
           \t\t\t"echo stock_wait_sp_keymaster=${I}s; "
           \t\t\t"echo stock_nodes; ls -l /dev/asym_cryptoapp /dev/cryptoapp /dev/sp_keymaster /dev/sec_nvm_* /dev/spdaemon_ssr 2>&1 || true; "
-          \t\t\t"echo stock_props; getprop | grep -Ei 'spcom|spu|spss|keymaster.strongbox|init.svc.vendor.(spdaemon|sec_nvm|keymaster-sb|authsecret)' || true; "
+          \t\t\t"echo stock_props; getprop | grep -Ei 'spcom|spu|spss|keymaster.strongbox|init.svc.vendor.(spdaemon|sec_nvm|keymaster-sb)' || true; "
           \t\t\t"if [ -e /dev/sp_keymaster ]; then exit 0; else exit 79; fi",
           \t\t\tstock_spu_diag, true);
           \t\tLOGINFO("b2q: stock SPU ordering diagnostics:\\n%s\\n", stock_spu_diag.c_str());
@@ -631,7 +621,7 @@ jobs:
 
           \t\tif (stock_spu_rc != 0 || !TWFunc::Path_Exists("/dev/sp_keymaster")) {
           \t\t\tstd::string sp_fail_diag;
-          \t\t\tTWFunc::Exec_Cmd("echo '--- stock-order SP keymaster failure ---'; /system/bin/sh /system/bin/b2q-security-diag.sh; echo '--- strongbox/authsecret ---'; getprop | grep -Ei 'keymaster-sb|authsecret|strongbox'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'spdaemon|spcom|sp_keymaster|cryptoapp|sec_nvm|strongbox|authsecret|keymaster' | tail -n 360; dmesg | grep -Ei 'spu|spss|spcom|remoteproc|watchdog|fatal|ssr' | tail -n 300", sp_fail_diag, true);
+          \t\t\tTWFunc::Exec_Cmd("echo '--- stock-order SP keymaster failure ---'; /system/bin/sh /system/bin/b2q-security-diag.sh; echo '--- strongbox ---'; getprop | grep -Ei 'keymaster-sb|strongbox'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'spdaemon|spcom|sp_keymaster|cryptoapp|sec_nvm|strongbox|keymaster' | tail -n 360; dmesg | grep -Ei 'spu|spss|spcom|remoteproc|watchdog|fatal|ssr' | tail -n 300", sp_fail_diag, true);
           \t\t\tLOGINFO("b2q: stock-order SP keymaster still missing:\\n%s\\n", sp_fail_diag.c_str());
           \t\t\tgui_print_color("error", "[b2q] SP KEYMASTER MISSING WITH STOCK ORDER\\n");
           \t\t\tgui_print("%s\\n", sp_fail_diag.c_str());
@@ -786,6 +776,8 @@ jobs:
           grep -Fq 'SPDAEMON STOCK FIRST START' gui/action.cpp
           grep -Fq 'SP KEYMASTER CHANNEL READY' gui/action.cpp
           grep -Fq 'STRONGBOX BINARY=' gui/action.cpp
+          grep -Fq 'STRONGBOX VERSION=' gui/action.cpp
+          grep -Fq 'vendor.keymaster.strongbox.version' gui/action.cpp
           grep -Fq 'sp_keymaster' gui/action.cpp
           grep -Fq 'SPDAEMON RUNNING - START SEC_NVM NOW' gui/action.cpp
           grep -Fq 'SP KEYMASTER MISSING WITH STOCK ORDER' gui/action.cpp
@@ -857,7 +849,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6af stock SPU order + StrongBox/AuthSecret flow verified'
+          echo '[b2q] test6af stock SPU order + StrongBox v4.0 flow verified'
 
       - name: Build recovery.img
         shell: bash
