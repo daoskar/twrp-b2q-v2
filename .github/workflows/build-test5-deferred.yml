@@ -798,7 +798,7 @@ jobs:
           ! grep -Fq 'SP KEYMASTER CHANNEL FAIL' gui/action.cpp
           grep -Fq 'SetProperty("ctl.start", "vendor.sec_nvm")' gui/action.cpp
           grep -Fq 'SetProperty("ctl.start", "vendor.spdaemon")' gui/action.cpp
-          python3 -c 'from pathlib import Path; s=Path("gui/action.cpp").read_text(); a=s.index("SetProperty(\\"ctl.start\\", \\"vendor.spdaemon\\")"); b=s.index("SetProperty(\\"ctl.start\\", \\"vendor.sec_nvm\\")"); assert a < b, (a, b)'
+          python3 -c "from pathlib import Path; s=Path('gui/action.cpp').read_text(); a=s.index('SetProperty(\"ctl.start\", \"vendor.spdaemon\")'); b=s.index('SetProperty(\"ctl.start\", \"vendor.sec_nvm\")'); assert a < b, (a, b)"
           grep -Fq 'QSEECOMD STABLE' gui/action.cpp
           grep -Fq 'QSEECOMD UNSTABLE' gui/action.cpp
           grep -Fq 'KEYMASTER HAL WAIT' gui/action.cpp
