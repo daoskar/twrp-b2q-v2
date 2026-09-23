@@ -764,8 +764,8 @@ jobs:
               '\t\tgui_print("[b2q] STOCK SPU ORDER START\\n");\n'
               '\t\t{\n'
               '\t\t\tstd::string b2q_ion_diag;\n'
-              '\t\t\tTWFunc::Exec_Cmd("echo -n \\'ION DEVICE=\\'; ls -l /dev/ion 2>&1; '
-              'echo \\'--- dma heaps ---\\'; ls -l /dev/dma_heap 2>&1 || true", b2q_ion_diag, true);\n'
+              '\t\t\tTWFunc::Exec_Cmd("echo -n \'ION DEVICE=\'; ls -l /dev/ion 2>&1; '
+              'echo \'--- dma heaps ---\'; ls -l /dev/dma_heap 2>&1 || true", b2q_ion_diag, true);\n'
               '\t\t\tgui_print("%s\\n", b2q_ion_diag.c_str());\n'
               '\t\t}\n'
           )
