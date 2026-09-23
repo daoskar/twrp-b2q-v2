@@ -656,7 +656,7 @@ jobs:
           \t\t\t"echo '--- firmware alias ---'; ls -ld /firmware /firmware/image /vendor/firmware_mnt /vendor/firmware_mnt/image 2>&1; "
           \t\t\t"echo '--- current keymaster TAs ---'; ls -l /firmware/image/keymaste* /firmware/image/*keymaster* /vendor/firmware_mnt/image/keymaste* /vendor/firmware_mnt/image/*keymaster* 2>&1 || true; "
           \t\t\t"echo '--- modem keymaster TAs ---'; ls -l /vendor/firmware-modem/image/keymaste* /vendor/firmware-modem/image/*keymaster* 2>&1 || true; "
-          \t\t\t"echo '--- skeymaster strings ---'; strings /vendor/lib64/libskeymaster4device.so 2>/dev/null | grep -Ei 'keymaste|keymaster|firmware|\\.mdt|QSEE' | head -n 120 || true",
+          \t\t\t"echo '--- skeymaster strings ---'; strings /vendor/lib64/libskeymaster4device.so 2>/dev/null | grep -Ei 'keymaste|keymaster|firmware|mdt|QSEE' | head -n 120 || true",
           \t\t\tqsee_fw_diag, true);
           \t\tLOGINFO("b2q: QSEE firmware path diagnostics:\\n%s\\n", qsee_fw_diag.c_str());
           \t\tgui_print("%s\\n", qsee_fw_diag.c_str());
@@ -823,7 +823,7 @@ jobs:
           grep -Fq 'SP APP SIGNATURES READY' gui/action.cpp
           grep -Fq 'STOCK SPU ORDER START' gui/action.cpp
           grep -Fq 'SPDAEMON STOCK FIRST START' gui/action.cpp
-          grep -Fq 'SP KEYMASTER CHANNEL READY' gui/action.cpp
+          grep -Fq 'SP KEYMASTER APP READY' gui/action.cpp
           grep -Fq 'STRONGBOX BINARY=' gui/action.cpp
           grep -Fq 'STRONGBOX VERSION=' gui/action.cpp
           grep -Fq 'vendor.keymaster.strongbox.version' gui/action.cpp
