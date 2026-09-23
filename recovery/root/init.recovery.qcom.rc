@@ -33,5 +33,8 @@ on fs
     mkdir /vendor/firmware_mnt
     mount vfat /dev/block/bootdevice/by-name/apnhlos /vendor/firmware_mnt ro
 
+    # Stock SM8350 QSEE clients also use /firmware/image.
+    symlink /vendor/firmware_mnt /firmware
+
 on boot
     start health-hal-2-1
