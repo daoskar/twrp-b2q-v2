@@ -1,13 +1,13 @@
-name: Build TWRP b2q QSEE firmware alias test6aj
+name: Build TWRP b2q skeymast QSEE TA test6ak
 
 on:
   push:
     branches:
-      - test6aj-qsee-firmware-alias
+      - test6ak-skeymast-qsee-ta
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6aj-${{ github.ref }}
+  group: twrp-b2q-test6ak-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6aj device tree
+      - name: Checkout test6ak device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -647,19 +647,42 @@ jobs:
           \t\t\tgui_print("[b2q] SP KEYMASTER NODE=missing (app already loaded is acceptable)\\n");
           \t\tgui_print("[b2q] SP KEYMASTER APP READY\\n");
 
-          \t\t// test6aj: Samsung/QSEE also resolves trusted apps through
-          \t\t// /firmware/image. Stock SM8350 creates /firmware as an alias
-          \t\t// of /vendor/firmware_mnt; expose both trees and the modem tree.
-          \t\tgui_print("[b2q] QSEE FIRMWARE PATH CHECK\\n");
+          \t\t// test6ak: the Samsung QSEE helper does not use the SPU keymp.sig
+          \t\t// name here. libkeymaster_helper.so points at
+          \t\t// /vendor/firmware_mnt/image/ and opens the QSEE app "skeymast".
+          \t\t// Keep apnhlos in place for SPU. Only if skeymast is absent there
+          \t\t// but present in the already-mounted modem tree, bind modem/image
+          \t\t// over the image directory immediately before starting Keymaster.
+          \t\tgui_print("[b2q] SKEYMAST TA CHECK\\n");
           \t\tstd::string qsee_fw_diag;
-          \t\tTWFunc::Exec_Cmd(
-          \t\t\t"echo '--- firmware alias ---'; ls -ld /firmware /firmware/image /vendor/firmware_mnt /vendor/firmware_mnt/image 2>&1; "
-          \t\t\t"echo '--- current keymaster TAs ---'; ls -l /firmware/image/keymaste* /firmware/image/*keymaster* /vendor/firmware_mnt/image/keymaste* /vendor/firmware_mnt/image/*keymaster* 2>&1 || true; "
-          \t\t\t"echo '--- modem keymaster TAs ---'; ls -l /vendor/firmware-modem/image/keymaste* /vendor/firmware-modem/image/*keymaster* 2>&1 || true; "
-          \t\t\t"echo '--- skeymaster strings ---'; strings /vendor/lib64/libskeymaster4device.so 2>/dev/null | grep -Ei 'keymaste|keymaster|firmware|mdt|QSEE' | head -n 120 || true",
+          \t\tint qsee_fw_rc = TWFunc::Exec_Cmd(
+          \t\t\t"echo helper_path=/vendor/firmware_mnt/image/; echo helper_app=skeymast; "
+          \t\t\t"echo fstab_suffix=$(getprop ro.boot.fstab_suffix); "
+          \t\t\t"echo '--- firmware mounts ---'; grep -E 'firmware_mnt|firmware-modem' /proc/mounts || true; "
+          \t\t\t"echo '--- current skeymast TA ---'; ls -l /vendor/firmware_mnt/image/skeymast* 2>&1 || true; "
+          \t\t\t"echo '--- modem skeymast TA ---'; ls -l /vendor/firmware-modem/image/skeymast* 2>&1 || true; "
+          \t\t\t"if ls /vendor/firmware_mnt/image/skeymast* >/dev/null 2>&1; then "
+          \t\t\t"  echo QSEE_TA_SOURCE=current-apnhlos; exit 0; "
+          \t\t\t"fi; "
+          \t\t\t"if ls /vendor/firmware-modem/image/skeymast* >/dev/null 2>&1; then "
+          \t\t\t"  echo QSEE_TA_SOURCE=modem-candidate; "
+          \t\t\t"  mount -o bind /vendor/firmware-modem/image /vendor/firmware_mnt/image || exit 61; "
+          \t\t\t"  echo QSEE_TA_SOURCE=modem-bind; "
+          \t\t\t"  ls -l /vendor/firmware_mnt/image/skeymast* 2>&1; "
+          \t\t\t"  exit 0; "
+          \t\t\t"fi; "
+          \t\t\t"echo QSEE_TA_SOURCE=missing; "
+          \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 -iname 'skeymast*' -o -iname 'keymaste*' 2>/dev/null | head -n 120; "
+          \t\t\t"exit 63",
           \t\t\tqsee_fw_diag, true);
-          \t\tLOGINFO("b2q: QSEE firmware path diagnostics:\\n%s\\n", qsee_fw_diag.c_str());
+          \t\tLOGINFO("b2q: Samsung QSEE skeymast diagnostics:\\n%s\\n", qsee_fw_diag.c_str());
           \t\tgui_print("%s\\n", qsee_fw_diag.c_str());
+          \t\tif (qsee_fw_rc != 0) {
+          \t\t\tgui_print_color("error", "[b2q] SKEYMAST TA PREP FAIL rc=%d\\n", qsee_fw_rc);
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_print("[b2q] SKEYMAST TA READY\\n");
 
           \t\tgui_msg("b2q_keymaster_dir_start=[b2q] KEYMASTER DIR START");
           \t\tif (!TWFunc::Recursive_Mkdir("/data/vendor/keymaster")) {
@@ -692,7 +715,7 @@ jobs:
           \t\t}
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
-          \t\t\tTWFunc::Exec_Cmd("/system/bin/sh /system/bin/b2q-security-diag.sh; echo '--- SP nodes after Keymaster attempt ---'; ls -l /dev/sp* /dev/sec_nvm_* 2>&1; echo '--- SP app files ---'; ls -l /vendor/firmware_mnt/image/keym*.sig /vendor/firmware_mnt/image/crypt*.sig /vendor/firmware_mnt/image/asym*.sig 2>&1; echo '--- QSEE image load log ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'QSEECOMAPI|QSEECom_start_app|Cannot open the file|Loading image failed|keymaster_tee|skeymaster' | tail -n 180; echo '--- Keymaster/SP logcat ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'Keymaster|keymasterutils|skeymaster|spu_init|sp_keymaster|spcom|spdaemon|sec_nvm|cryptoapp|hwservicemanager' | tail -n 260; echo '--- previous pstore ---'; if [ -d /sys/fs/pstore ]; then for f in /sys/fs/pstore/*; do [ -f \\\"$f\\\" ] || continue; echo \\\"=== $f ===\\\"; grep -Eai 'panic|watchdog|spu|spss|sec_nvm|spcom|fatal|reboot|restart' \\\"$f\\\" | tail -n 120; done; fi", km_diag, true);
+          \t\t\tTWFunc::Exec_Cmd("/system/bin/sh /system/bin/b2q-security-diag.sh; echo '--- SP nodes after Keymaster attempt ---'; ls -l /dev/sp* /dev/sec_nvm_* 2>&1; echo '--- SP app files ---'; ls -l /vendor/firmware_mnt/image/keym*.sig /vendor/firmware_mnt/image/crypt*.sig /vendor/firmware_mnt/image/asym*.sig 2>&1; echo '--- selected skeymast TA ---'; ls -l /vendor/firmware_mnt/image/skeymast* 2>&1; echo '--- modem skeymast TA ---'; ls -l /vendor/firmware-modem/image/skeymast* 2>&1 || true; echo '--- QSEE image load log ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'QSEECOMAPI|QSEECom_start_app|Cannot open the file|Loading image failed|keymaster_tee|skeymaster|skeymast' | tail -n 220; echo '--- Keymaster/SP logcat ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'Keymaster|keymasterutils|skeymaster|spu_init|sp_keymaster|spcom|spdaemon|sec_nvm|cryptoapp|hwservicemanager' | tail -n 260; echo '--- previous pstore ---'; if [ -d /sys/fs/pstore ]; then for f in /sys/fs/pstore/*; do [ -f \\\"$f\\\" ] || continue; echo \\\"=== $f ===\\\"; grep -Eai 'panic|watchdog|spu|spss|sec_nvm|spcom|fatal|reboot|restart' \\\"$f\\\" | tail -n 120; done; fi", km_diag, true);
           \t\t\tLOGINFO("b2q: keymaster HAL diagnostics:\\n%s\\n", km_diag.c_str());
           \t\t\tgui_print_color("error", "[b2q] KEYMASTER HAL FAIL\\n");
           \t\t\tgui_print("%s\\n", km_diag.c_str());
@@ -833,7 +856,9 @@ jobs:
           grep -Fq 'FORCED KEYMASTER APP TEST START' gui/action.cpp
           grep -Fq 'FORCED SP KEYMASTER LOAD OK' gui/action.cpp
           grep -Fq 'SP KEYMASTER NODE=missing (app already loaded is acceptable)' gui/action.cpp
-          grep -Fq 'QSEE FIRMWARE PATH CHECK' gui/action.cpp
+          grep -Fq 'SKEYMAST TA CHECK' gui/action.cpp
+          grep -Fq 'SKEYMAST TA READY' gui/action.cpp
+          grep -Fq 'QSEE_TA_SOURCE=modem-bind' gui/action.cpp
           grep -Fq 'QSEE image load log' gui/action.cpp
           grep -Fq 'b2q-sp-loader sp_keymaster' gui/action.cpp
           grep -Fq 'b2q-spu-firmware-probe.sh' gui/action.cpp
@@ -908,7 +933,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6aj QSEE firmware alias + SP app flow verified'
+          echo '[b2q] test6ak Samsung skeymast QSEE TA flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -948,28 +973,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6aj package
+      - name: Build Odin test6ak package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6aj-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6ak-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6aj artifact
+      - name: Upload test6ak artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-qsee-firmware-alias-test6aj-${{ github.sha }}
+          name: TWRP-b2q-skeymast-qsee-ta-test6ak-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6aj-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6aj-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6ak-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6ak-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
