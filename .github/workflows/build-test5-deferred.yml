@@ -1,13 +1,13 @@
-name: Build TWRP b2q StrongBox gate test6an
+name: Build TWRP b2q SKeymaster first trace test6ao
 
 on:
   push:
     branches:
-      - test6an-strongbox-gate
+      - test6ao-skeymaster-first-trace
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6an-${{ github.ref }}
+  group: twrp-b2q-test6ao-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6an device tree
+      - name: Checkout test6ao device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -786,6 +786,8 @@ jobs:
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
           \t\t\tTWFunc::Exec_Cmd(
+          \t\t\t\t"echo '=== SKEYMASTER FIRST TRACE ==='; "
+          \t\t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'skeymaster4dev|keymasterutils|keymaster_tee|QSEECOMAPI|StrongBox|strongbox|spu_init|sp_keymaster|skeymast|QSEECom_start_app|Loading image failed|cannot open|failed in intializing|not registered yet|during retry' | tail -n 90; "
           \t\t\t\t"echo '=== KEYMASTER BLOCK POINT ==='; "
           \t\t\t\t"PID=$(pidof android.hardware.keymaster@4.0-service 2>/dev/null | awk '{print $1}'); "
           \t\t\t\t"if [ -z \\\"$PID\\\" ]; then PID=$(ps -A 2>/dev/null | awk '/android.hardware.keymaster@4.0-service/{print $2; exit}'); fi; "
@@ -794,6 +796,7 @@ jobs:
           \t\t\t\t" echo -n 'wchan='; cat /proc/$PID/wchan 2>/dev/null; "
           \t\t\t\t" echo '--- syscall ---'; cat /proc/$PID/syscall 2>/dev/null || true; "
           \t\t\t\t" echo '--- status ---'; grep -E '^(Name|State|Pid|PPid|Threads|Sig|Cap|Cpus_allowed_list)' /proc/$PID/status 2>/dev/null || true; "
+          \t\t\t\t" echo '--- keymaster maps ---'; grep -E 'libskeymaster4device|libkeymasterutils|libkeymaster_helper|libspcom|libQSEEComAPI|libc\\.so' /proc/$PID/maps 2>/dev/null || true; "
           \t\t\t\t" echo '--- thread wchan ---'; for T in /proc/$PID/task/*; do [ -d \\\"$T\\\" ] || continue; echo -n \\\"$(basename $T) \\\"; cat $T/comm 2>/dev/null | tr '\\n' ' '; echo -n ' wchan='; cat $T/wchan 2>/dev/null; done; "
           \t\t\t\t" echo '--- kernel stacks ---'; for T in /proc/$PID/task/*; do [ -r \\\"$T/stack\\\" ] || continue; echo \\\"### $(basename $T) $(cat $T/comm 2>/dev/null) ###\\\"; cat $T/stack 2>/dev/null | head -n 24; done; "
           \t\t\t\t" echo '--- open fds ---'; ls -l /proc/$PID/fd 2>/dev/null | head -n 120; "
@@ -957,6 +960,9 @@ jobs:
           grep -Fq 'STRONGBOX HAL READY' gui/action.cpp
           grep -Fq 'STRONGBOX HAL FAIL' gui/action.cpp
           grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
+          grep -Fq 'SKEYMASTER FIRST TRACE' gui/action.cpp
+          grep -Fq 'skeymaster4dev' gui/action.cpp
+          grep -Fq 'keymaster maps' gui/action.cpp
           grep -Fq 'keymaster_pid=' gui/action.cpp
           grep -Fq 'SERVICE SNAPSHOT' gui/action.cpp
           grep -Fq 'DEVICE NODES' gui/action.cpp
@@ -1035,7 +1041,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6an StrongBox gate + Keymaster trace flow verified'
+          echo '[b2q] test6ao SKeymaster-first trace flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1075,28 +1081,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6an package
+      - name: Build Odin test6ao package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6an-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6ao-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6an artifact
+      - name: Upload test6ao artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-strongbox-gate-test6an-${{ github.sha }}
+          name: TWRP-b2q-skeymaster-first-trace-test6ao-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6an-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6an-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6ao-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6ao-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
