@@ -1,13 +1,13 @@
-name: Build TWRP b2q Keymaster proc trace test6am
+name: Build TWRP b2q StrongBox gate test6an
 
 on:
   push:
     branches:
-      - test6am-keymaster-proc-trace
+      - test6an-strongbox-gate
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6am-${{ github.ref }}
+  group: twrp-b2q-test6an-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6am device tree
+      - name: Checkout test6an device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -651,6 +651,56 @@ jobs:
           \t\t\tgui_print("[b2q] SP KEYMASTER NODE=missing (app already loaded is acceptable)\\n");
           \t\tgui_print("[b2q] SP KEYMASTER APP READY\\n");
 
+          \t\t// test6an: Samsung SKeymaster blocks in waitStrongBoxKeymaster()
+          \t\t// until IKeymasterDevice/strongbox is really registered. A running
+          \t\t// init service is not sufficient. Re-check after SPU is ready and
+          \t\t// restart StrongBox once if it was started too early.
+          \t\tgui_print("[b2q] STRONGBOX HAL CHECK\\n");
+          \t\tandroid::sp<android::hardware::keymaster::V4_0::IKeymasterDevice> strongbox_hal;
+          \t\tfor (int i = 0; i < 30 && strongbox_hal == nullptr; ++i) {
+          \t\t\tstrongbox_hal = android::hardware::keymaster::V4_0::IKeymasterDevice::tryGetService("strongbox", false);
+          \t\t\tif (strongbox_hal == nullptr)
+          \t\t\t\tusleep(100000);
+          \t\t}
+          \t\tif (strongbox_hal == nullptr) {
+          \t\t\tstd::string sb_before;
+          \t\t\tTWFunc::Exec_Cmd(
+          \t\t\t\t"echo '--- StrongBox before restart ---'; "
+          \t\t\t\t"echo state=$(getprop init.svc.vendor.keymaster-sb-4-0); "
+          \t\t\t\t"PID=$(pidof android.hardware.keymaster@4.0-strongbox-service-qti 2>/dev/null | awk '{print $1}'); "
+          \t\t\t\t"echo pid=$PID; if [ -n \\\"$PID\\\" ]; then echo -n 'wchan='; cat /proc/$PID/wchan 2>/dev/null; cat /proc/$PID/status 2>/dev/null | grep -E '^(Name|State|Pid|Threads)'; fi; "
+          \t\t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'StrongBox|strongbox|keymaster-sb|ssp|SPU|spcom' | tail -n 180",
+          \t\t\t\tsb_before, true);
+          \t\t\tLOGINFO("b2q: StrongBox before restart:\\n%s\\n", sb_before.c_str());
+          \t\t\tgui_print("%s\\n", sb_before.c_str());
+          \t\t\tgui_print("[b2q] STRONGBOX HAL MISSING - RESTART AFTER SPU READY\\n");
+          \t\t\tandroid::base::SetProperty("ctl.stop", "vendor.keymaster-sb-4-0");
+          \t\t\tusleep(300000);
+          \t\t\tandroid::base::SetProperty("ctl.start", "vendor.keymaster-sb-4-0");
+          \t\t\tfor (int i = 0; i < 100 && strongbox_hal == nullptr; ++i) {
+          \t\t\t\tstrongbox_hal = android::hardware::keymaster::V4_0::IKeymasterDevice::tryGetService("strongbox", false);
+          \t\t\t\tif (strongbox_hal == nullptr)
+          \t\t\t\t\tusleep(100000);
+          \t\t\t}
+          \t\t}
+          \t\tif (strongbox_hal == nullptr) {
+          \t\t\tstd::string sb_fail;
+          \t\t\tTWFunc::Exec_Cmd(
+          \t\t\t\t"echo '=== STRONGBOX HAL FAIL ==='; "
+          \t\t\t\t"echo state=$(getprop init.svc.vendor.keymaster-sb-4-0); "
+          \t\t\t\t"PID=$(pidof android.hardware.keymaster@4.0-strongbox-service-qti 2>/dev/null | awk '{print $1}'); "
+          \t\t\t\t"echo pid=$PID; if [ -n \\\"$PID\\\" ]; then echo -n 'wchan='; cat /proc/$PID/wchan 2>/dev/null; echo '--- syscall ---'; cat /proc/$PID/syscall 2>/dev/null || true; echo '--- status ---'; grep -E '^(Name|State|Pid|PPid|Threads|Sig|Cap)' /proc/$PID/status 2>/dev/null || true; echo '--- fds ---'; ls -l /proc/$PID/fd 2>/dev/null | head -n 80; fi; "
+          \t\t\t\t"echo '--- StrongBox logcat ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'StrongBox|strongbox|keymaster-sb|ssp|SPU|spcom|QSEE|fatal|error|fail' | tail -n 280; "
+          \t\t\t\t"echo '--- nodes ---'; ls -l /dev/ion /dev/cryptoapp /dev/asym_cryptoapp /dev/sp_keymaster /dev/sec_nvm_* 2>&1 || true",
+          \t\t\t\tsb_fail, true);
+          \t\t\tLOGINFO("b2q: StrongBox HAL failed:\\n%s\\n", sb_fail.c_str());
+          \t\t\tgui_print_color("error", "[b2q] STRONGBOX HAL FAIL\\n");
+          \t\t\tgui_print("%s\\n", sb_fail.c_str());
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_print("[b2q] STRONGBOX HAL READY\\n");
+
           \t\t// test6ak: the Samsung QSEE helper does not use the SPU keymp.sig
           \t\t// name here. libkeymaster_helper.so points at
           \t\t// /vendor/firmware_mnt/image/ and opens the QSEE app "skeymast".
@@ -693,7 +743,7 @@ jobs:
           \t\t\t"echo sku=$(getprop ro.boot.product.vendor.sku); "
           \t\t\t"echo hardware=$(getprop ro.boot.hardware); "
           \t\t\t"echo board=$(getprop ro.board.platform); "
-          \t\t\t"echo spdaemon=$(getprop init.svc.vendor.spdaemon); "
+          \t\t\t"echo spdaemon=$(getprop init.svc.vendor.spdaemon); echo strongbox=$(getprop init.svc.vendor.keymaster-sb-4-0); "
           \t\t\t"echo sec_nvm=$(getprop init.svc.vendor.sec_nvm); "
           \t\t\t"echo qseecomd=$(getprop init.svc.vendor.qseecomd); "
           \t\t\t"ls -ld /mnt/vendor/persist/secnvm /mnt/vendor/persist/iar_db 2>&1 || true; "
@@ -750,7 +800,7 @@ jobs:
           \t\t\t\t"fi; "
           \t\t\t\t"echo '=== SPU VS QSEE TRACE ==='; "
           \t\t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'Failed to creat SPU|spu init tread|start init sp keymaster|initialize spu|call spu_init|spu_init success|failed in intializing spu|trying to open skeymaster TA|successfully load skeymaster|cannot open skeymaster TA|QSEECom_start_app|Loading image failed|keymaster_tee|skeymaster|skeymast|sp_keymaster|spcom|sec_nvm|cryptoapp' | tail -n 220; "
-          \t\t\t\t"echo '=== SERVICE SNAPSHOT ==='; getprop | grep -E 'init.svc.vendor.(spdaemon|sec_nvm|qseecomd|keymaster-4-0)' || true; "
+          \t\t\t\t"echo '=== SERVICE SNAPSHOT ==='; getprop | grep -E 'init.svc.vendor.(spdaemon|sec_nvm|qseecomd|keymaster-sb-4-0|keymaster-4-0)' || true; "
           \t\t\t\t"echo '=== DEVICE NODES ==='; ls -l /dev/cryptoapp /dev/asym_cryptoapp /dev/sp_keymaster /dev/sec_nvm_* 2>&1 || true; "
           \t\t\t\t"echo '=== SKEYMAST FILES ==='; ls -l /vendor/firmware_mnt/image/skeymast* /vendor/firmware-modem/image/skeymast* 2>&1 || true; "
           \t\t\t\t"echo '=== FULL SECURITY DIAG (AFTER FOCUSED TRACE) ==='; /system/bin/sh /system/bin/b2q-security-diag.sh; "
@@ -902,6 +952,11 @@ jobs:
           grep -Fq 'KEYMASTER BLOCK POINT' gui/action.cpp
           grep -Fq 'SPU VS QSEE TRACE' gui/action.cpp
           grep -Fq 'thread wchan' gui/action.cpp
+          grep -Fq 'STRONGBOX HAL CHECK' gui/action.cpp
+          grep -Fq 'STRONGBOX HAL MISSING - RESTART AFTER SPU READY' gui/action.cpp
+          grep -Fq 'STRONGBOX HAL READY' gui/action.cpp
+          grep -Fq 'STRONGBOX HAL FAIL' gui/action.cpp
+          grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
           grep -Fq 'keymaster_pid=' gui/action.cpp
           grep -Fq 'SERVICE SNAPSHOT' gui/action.cpp
           grep -Fq 'DEVICE NODES' gui/action.cpp
@@ -980,7 +1035,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6am Keymaster proc/SPU trace flow verified'
+          echo '[b2q] test6an StrongBox gate + Keymaster trace flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1020,28 +1075,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6am package
+      - name: Build Odin test6an package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6am-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6an-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6am artifact
+      - name: Upload test6an artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-keymaster-proc-trace-test6am-${{ github.sha }}
+          name: TWRP-b2q-strongbox-gate-test6an-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6am-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6am-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6an-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6an-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
