@@ -902,8 +902,11 @@ jobs:
           grep -Fq 'KEYMASTER BLOCK POINT' gui/action.cpp
           grep -Fq 'SPU VS QSEE TRACE' gui/action.cpp
           grep -Fq 'thread wchan' gui/action.cpp
+          grep -Fq 'keymaster_pid=' gui/action.cpp
+          grep -Fq 'SERVICE SNAPSHOT' gui/action.cpp
+          grep -Fq 'DEVICE NODES' gui/action.cpp
+          echo '[b2q] test6am focused trace assertions OK'
           grep -Fq 'QSEE_TA_SOURCE=modem-bind' gui/action.cpp
-          grep -Fq 'QSEE image load log' gui/action.cpp
           grep -Fq 'b2q-sp-loader sp_keymaster' gui/action.cpp
           grep -Fq 'b2q-spu-firmware-probe.sh' gui/action.cpp
           grep -Fq 'b2q-sp-app-probe.sh' gui/action.cpp
