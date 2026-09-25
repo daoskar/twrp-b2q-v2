@@ -84,9 +84,12 @@ jobs:
           mkdir -p "$KM_PREBUILT"
           curl -fL --retry 3             "https://raw.githubusercontent.com/samsung-sm8350/proprietary_vendor_samsung/3bf7df25d3fce7a2f09a082cdf2057281bb9760e/sm8350-common/proprietary/vendor/lib64/libskeymaster4device.so"             -o "$KM_PREBUILT/libskeymaster4device.so"
           test "$(stat -c %s "$KM_PREBUILT/libskeymaster4device.so")" -gt 10000
-          file "$KM_PREBUILT/libskeymaster4device.so" | grep -Fq 'ELF 64-bit'
-          nm -D --defined-only "$KM_PREBUILT/libskeymaster4device.so" | c++filt > "$KM_PREBUILT/libskeymaster4device.symbols.txt"
+          file "$KM_PREBUILT/libskeymaster4device.so" > "$KM_PREBUILT/libskeymaster4device.file.txt"
+          grep -Fq 'ELF 64-bit' "$KM_PREBUILT/libskeymaster4device.file.txt"
+          nm -D --defined-only "$KM_PREBUILT/libskeymaster4device.so" > "$KM_PREBUILT/libskeymaster4device.nm.txt"
+          c++filt < "$KM_PREBUILT/libskeymaster4device.nm.txt" > "$KM_PREBUILT/libskeymaster4device.symbols.txt"
           grep -Fq 'skeymaster::CreateSKeymasterDevice(android::hardware::keymaster::V4_0::SecurityLevel)' "$KM_PREBUILT/libskeymaster4device.symbols.txt"
+          echo '[b2q] Keymaster prebuilt validation OK'
 
           cat > "$KM_PREBUILT/Android.mk" <<'EOF'
           LOCAL_PATH := $(call my-dir)
