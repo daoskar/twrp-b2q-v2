@@ -1,13 +1,13 @@
-name: Build TWRP b2q SKeymaster first trace test6ao
+name: Build TWRP b2q stock Keymaster test6ap
 
 on:
   push:
     branches:
-      - test6ao-skeymaster-first-trace
+      - test6ap-stock-b2q-keymaster
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6ao-${{ github.ref }}
+  group: twrp-b2q-test6ap-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6ao device tree
+      - name: Checkout test6ap device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -152,8 +152,10 @@ jobs:
               stdio_to_kmsg
               seclabel u:r:recovery:s0
 
-          # b2q test6v: use the Samsung SM8350 wrapper built into recovery.
-          service vendor.keymaster-4-0 /system/bin/android.hardware.keymaster@4.0-service.samsung
+          # b2q test6ap: use the original Keymaster HAL from the mounted b2q /vendor.
+          # Keep the Lineage wrapper in the image only as a build/reference control;
+          # it is deliberately not used for this test.
+          service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service
               override
               interface android.hardware.keymaster@4.0::IKeymasterDevice default
               class early_hal
@@ -206,7 +208,7 @@ jobs:
           grep -A8 -F 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc | grep -Fq 'shutdown critical'
           ! grep -A10 -F 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc | grep -Fq 'oneshot'
           ! grep -A10 -F 'service vendor.sec_nvm /vendor/bin/sec_nvm' recovery/root/init.recovery.qcom.rc | grep -Fq 'oneshot'
-          grep -Fq 'service vendor.keymaster-4-0 /system/bin/android.hardware.keymaster@4.0-service.samsung' recovery/root/init.recovery.qcom.rc
+          grep -Fq 'service vendor.keymaster-4-0 /vendor/bin/hw/android.hardware.keymaster@4.0-service' recovery/root/init.recovery.qcom.rc
           grep -Fq 'TARGET_KEYMASTER_VARIANT := samsung' BoardConfig.mk
           grep -Fq 'android.hardware.keymaster@4.0-service.samsung' device.mk
           grep -Fq 'service vendor.spdaemon /vendor/bin/spdaemon' recovery/root/init.recovery.qcom.rc
@@ -767,6 +769,22 @@ jobs:
           \t\t}
           \t\tgui_msg("b2q_keymaster_dir_ok=[b2q] KEYMASTER DIR OK");
 
+          \t\tstd::string stock_km_diag;
+          \t\tint stock_km_rc = TWFunc::Exec_Cmd(
+          \t\t\t"echo '=== STOCK B2Q KEYMASTER PRECHECK ==='; "
+          \t\t\t"ls -l /vendor/bin/hw/android.hardware.keymaster@4.0-service /vendor/lib64/libskeymaster4device.so /vendor/lib64/libkeymaster_helper.so 2>&1; "
+          \t\t\t"sha256sum /vendor/bin/hw/android.hardware.keymaster@4.0-service /vendor/lib64/libskeymaster4device.so /vendor/lib64/libkeymaster_helper.so 2>/dev/null || true; "
+          \t\t\t"echo '--- service deps strings ---'; strings /vendor/bin/hw/android.hardware.keymaster@4.0-service 2>/dev/null | grep -Ei 'libskeymaster|libqtikeymaster|keymaster|strongbox|QSEE|spu' | head -n 80 || true",
+          \t\t\tstock_km_diag, true);
+          \t\tLOGINFO("b2q: stock Keymaster precheck:\\n%s\\n", stock_km_diag.c_str());
+          \t\tgui_print("%s\\n", stock_km_diag.c_str());
+          \t\tif (stock_km_rc != 0 || !TWFunc::Path_Exists("/vendor/bin/hw/android.hardware.keymaster@4.0-service")) {
+          \t\t\tgui_print_color("error", "[b2q] STOCK B2Q KEYMASTER BINARY FAIL\\n");
+          \t\t\toperation_end(1);
+          \t\t\treturn 0;
+          \t\t}
+          \t\tgui_print("[b2q] STOCK B2Q KEYMASTER BINARY READY\\n");
+
           \t\tgui_msg("b2q_keymaster_start=[b2q] KEYMASTER START");
           \t\tandroid::base::SetProperty("ctl.stop", "vendor.keymaster-4-0");
           \t\tusleep(200000);
@@ -786,12 +804,12 @@ jobs:
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
           \t\t\tTWFunc::Exec_Cmd(
-          \t\t\t\t"echo '=== SKEYMASTER FIRST TRACE ==='; "
-          \t\t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'skeymaster4dev|keymasterutils|keymaster_tee|QSEECOMAPI|StrongBox|strongbox|spu_init|sp_keymaster|skeymast|QSEECom_start_app|Loading image failed|cannot open|failed in intializing|not registered yet|during retry' | tail -n 90; "
+          \t\t\t\t"echo '=== STOCK B2Q KEYMASTER FIRST TRACE ==='; "
+          \t\t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'keymaster|skeymaster|qtikeymaster|QSEECOMAPI|QSEECom|StrongBox|strongbox|spu|spcom|cryptoapp|sec_nvm|trustlet|Loading image failed|cannot open|not registered|during retry|fatal|error|fail' | tail -n 120; "
           \t\t\t\t"echo '=== KEYMASTER BLOCK POINT ==='; "
           \t\t\t\t"PID=$(pidof android.hardware.keymaster@4.0-service 2>/dev/null | awk '{print $1}'); "
           \t\t\t\t"if [ -z \\\"$PID\\\" ]; then PID=$(ps -A 2>/dev/null | awk '/android.hardware.keymaster@4.0-service/{print $2; exit}'); fi; "
-          \t\t\t\t"echo keymaster_pid=$PID; "
+          \t\t\t\t"echo keymaster_pid=$PID; if [ -n \\\"$PID\\\" ]; then echo -n 'exe='; readlink /proc/$PID/exe 2>/dev/null || true; fi; "
           \t\t\t\t"if [ -n \\\"$PID\\\" ] && [ -d /proc/$PID ]; then "
           \t\t\t\t" echo -n 'wchan='; cat /proc/$PID/wchan 2>/dev/null; "
           \t\t\t\t" echo '--- syscall ---'; cat /proc/$PID/syscall 2>/dev/null || true; "
@@ -960,8 +978,10 @@ jobs:
           grep -Fq 'STRONGBOX HAL READY' gui/action.cpp
           grep -Fq 'STRONGBOX HAL FAIL' gui/action.cpp
           grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
-          grep -Fq 'SKEYMASTER FIRST TRACE' gui/action.cpp
-          grep -Fq 'skeymaster4dev' gui/action.cpp
+          grep -Fq 'STOCK B2Q KEYMASTER PRECHECK' gui/action.cpp
+          grep -Fq 'STOCK B2Q KEYMASTER BINARY READY' gui/action.cpp
+          grep -Fq 'STOCK B2Q KEYMASTER FIRST TRACE' gui/action.cpp
+          grep -Fq '/vendor/bin/hw/android.hardware.keymaster@4.0-service' gui/action.cpp
           grep -Fq 'keymaster maps' gui/action.cpp
           grep -Fq 'keymaster_pid=' gui/action.cpp
           grep -Fq 'SERVICE SNAPSHOT' gui/action.cpp
@@ -1041,7 +1061,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6ao SKeymaster-first trace flow verified'
+          echo '[b2q] test6ap stock b2q Keymaster flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1081,28 +1101,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6ao package
+      - name: Build Odin test6ap package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6ao-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6ap-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6ao artifact
+      - name: Upload test6ap artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-skeymaster-first-trace-test6ao-${{ github.sha }}
+          name: TWRP-b2q-stock-keymaster-test6ap-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6ao-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6ao-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6ap-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6ap-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
