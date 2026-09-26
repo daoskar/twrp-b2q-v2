@@ -796,7 +796,7 @@ jobs:
           \t\t\t\t" echo -n 'wchan='; cat /proc/$PID/wchan 2>/dev/null; "
           \t\t\t\t" echo '--- syscall ---'; cat /proc/$PID/syscall 2>/dev/null || true; "
           \t\t\t\t" echo '--- status ---'; grep -E '^(Name|State|Pid|PPid|Threads|Sig|Cap|Cpus_allowed_list)' /proc/$PID/status 2>/dev/null || true; "
-          \t\t\t\t" echo '--- keymaster maps ---'; grep -E 'libskeymaster4device|libkeymasterutils|libkeymaster_helper|libspcom|libQSEEComAPI|libc\\.so' /proc/$PID/maps 2>/dev/null || true; "
+          \t\t\t\t" echo '--- keymaster maps ---'; grep -E 'libskeymaster4device|libkeymasterutils|libkeymaster_helper|libspcom|libQSEEComAPI|libc[.]so' /proc/$PID/maps 2>/dev/null || true; "
           \t\t\t\t" echo '--- thread wchan ---'; for T in /proc/$PID/task/*; do [ -d \\\"$T\\\" ] || continue; echo -n \\\"$(basename $T) \\\"; cat $T/comm 2>/dev/null | tr '\\n' ' '; echo -n ' wchan='; cat $T/wchan 2>/dev/null; done; "
           \t\t\t\t" echo '--- kernel stacks ---'; for T in /proc/$PID/task/*; do [ -r \\\"$T/stack\\\" ] || continue; echo \\\"### $(basename $T) $(cat $T/comm 2>/dev/null) ###\\\"; cat $T/stack 2>/dev/null | head -n 24; done; "
           \t\t\t\t" echo '--- open fds ---'; ls -l /proc/$PID/fd 2>/dev/null | head -n 120; "
