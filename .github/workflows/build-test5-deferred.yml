@@ -1,13 +1,13 @@
-name: Build TWRP b2q SPCom status first test6av
+name: Build TWRP b2q SPCom ready props test6aw
 
 on:
   push:
     branches:
-      - test6av-spcom-status-first
+      - test6aw-spcom-ready-props
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6av-${{ github.ref }}
+  group: twrp-b2q-test6aw-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6av device tree
+      - name: Checkout test6aw device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -813,6 +813,24 @@ jobs:
           \t\t\t"ls -l /dev/sp_kernel /dev/cryptoapp /dev/asym_cryptoapp /dev/sp_keymaster /dev/sec_nvm_* >> /tmp/b2q-spu-pre-keymaster 2>&1 || true; "
           \t\t\t"getprop | grep -Ei 'spu|spcom|spss|keymaster|strongbox|sec_nvm' >> /tmp/b2q-spu-pre-keymaster 2>/dev/null || true",
           \t\t\tfalse);
+          \t\tstd::string spcom_ready_diag;
+          \t\tbool sec_prop_ok = android::base::SetProperty("vendor.spcom.sec_nvm_init", "done");
+          \t\tbool spd_prop_ok = android::base::SetProperty("vendor.spcom.spdaemon_init", "done");
+          \t\tTWFunc::Exec_Cmd(
+          \t\t\t"echo '=== TEST6AW SPCOM READY PROPS ==='; "
+          \t\t\t"echo '--- stock daemon property strings ---'; "
+          \t\t\t"strings /vendor/bin/spdaemon 2>/dev/null | grep -F 'vendor.spcom.' | head -n 40 || true; "
+          \t\t\t"strings /vendor/bin/sec_nvm 2>/dev/null | grep -F 'vendor.spcom.' | head -n 40 || true; "
+          \t\t\t"echo sec_nvm_init=$(getprop vendor.spcom.sec_nvm_init); "
+          \t\t\t"echo spdaemon_init=$(getprop vendor.spcom.spdaemon_init); "
+          \t\t\t"/system/bin/b2q-sp-loader --status 2>&1",
+          \t\t\tspcom_ready_diag, true);
+          \t\tLOGINFO("b2q: test6aw property writes sec_nvm=%d spdaemon=%d\\n%s\\n",
+          \t\t\tsec_prop_ok ? 1 : 0, spd_prop_ok ? 1 : 0, spcom_ready_diag.c_str());
+          \t\tgui_print("[b2q] SPCOM PROP WRITE sec_nvm=%d spdaemon=%d\\n",
+          \t\t\tsec_prop_ok ? 1 : 0, spd_prop_ok ? 1 : 0);
+          \t\tgui_print("%s\\n", spcom_ready_diag.c_str());
+          \t\tusleep(500000);
           \t\tTWFunc::Exec_Cmd("logcat -b all -c 2>/dev/null || true", false);
           \t\tgui_print("[b2q] SPU HANDOFF TRACE START\\n");
           \t\tandroid::base::SetProperty("ctl.start", "vendor.keymaster-4-0");
@@ -829,7 +847,9 @@ jobs:
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
           \t\t\tTWFunc::Exec_Cmd(
-          "echo '=== TEST6AV SPCOM STATUS FIRST ==='; "
+          "echo '=== TEST6AW READY PROP RESULT ==='; "
+          "echo sec_nvm_init=$(getprop vendor.spcom.sec_nvm_init); "
+          "echo spdaemon_init=$(getprop vendor.spcom.spdaemon_init); "
           "echo '--- CRITICAL SPCOM STATUS ---'; "
           "/system/bin/b2q-sp-loader --status 2>&1; "
           "echo vendor.spcom.sec_nvm_init=$(getprop vendor.spcom.sec_nvm_init); "
@@ -1023,7 +1043,10 @@ jobs:
           grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER PRECHECK' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER BINARY READY' gui/action.cpp
-          grep -Fq 'TEST6AV SPCOM STATUS FIRST' gui/action.cpp
+          grep -Fq 'TEST6AW SPCOM READY PROPS' gui/action.cpp
+          grep -Fq 'TEST6AW READY PROP RESULT' gui/action.cpp
+          grep -Fq 'SetProperty("vendor.spcom.sec_nvm_init", "done")' gui/action.cpp
+          grep -Fq 'SetProperty("vendor.spcom.spdaemon_init", "done")' gui/action.cpp
           grep -Fq 'SPU PRE-KEYMASTER SNAPSHOT' gui/action.cpp
           grep -Fq 'first stock Keymaster/SPU lines' gui/action.cpp
           grep -Fq 'QSEE fallback transition' gui/action.cpp
@@ -1158,28 +1181,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6av package
+      - name: Build Odin test6aw package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6av-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6aw-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6av artifact
+      - name: Upload test6aw artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-spcom-status-first-test6av-${{ github.sha }}
+          name: TWRP-b2q-spcom-ready-props-test6aw-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6av-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6av-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6aw-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6aw-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
