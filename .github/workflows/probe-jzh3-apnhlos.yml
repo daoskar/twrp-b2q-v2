@@ -27,7 +27,17 @@ jobs:
           set -euo pipefail
           curl -fL --retry 3 https://raw.githubusercontent.com/zall35/SamFW/master/common/src/commonMain/kotlin/tk/zwander/common/tools/CryptUtils.kt -o /tmp/CryptUtils.kt
           curl -fL --retry 3 https://raw.githubusercontent.com/zall35/SamFW/master/common/src/commonMain/moko-resources/files/tacs.csv -o /tmp/tacs.csv
-          grep -F 'SM-F711B' /tmp/tacs.csv | head -n 5
+          python3 - <<'PY'
+          count=0
+          for line in open('/tmp/tacs.csv','r',encoding='utf-8'):
+              if 'SM-F711B' in line:
+                  print(line.rstrip())
+                  count += 1
+                  if count == 5:
+                      break
+          if count == 0:
+              raise SystemExit('SM-F711B TAC not found')
+          PY
 
       - name: Probe JZH3 using current Bifrost auth semantics
         shell: bash
