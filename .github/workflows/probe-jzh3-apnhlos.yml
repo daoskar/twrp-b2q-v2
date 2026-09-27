@@ -16,52 +16,69 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 30
     steps:
-      - name: Inspect SamFW JZH3 page and child-download API
+      - name: Install current SamLoader Reloaded
         shell: bash
         run: |
           set -euo pipefail
-          PAGE='https://samfw.com/firmware/SM-F711B/PLS/F711BXXSJJZH3'
-          curl -fL --retry 3 -A 'Mozilla/5.0' "$PAGE" -o samfw.html
-          echo "page_size=$(stat -c %s samfw.html)"
-          grep -n -F 'BL_F711BXXSJJZH3_F711BXXSJJZH3_MQB113546584_REV00_user_low_ship_MULTI_CERT.tar.md5.zip' samfw.html | head -n 20 || true
-          echo '--- URLs / download-ish fragments ---'
-          grep -Eo 'https?://[^"''' <>]+' samfw.html | grep -Ei 'download|firmware|samfw|google|drive' | sort -u | head -n 200 || true
-          echo '--- nearby child firmware markup ---'
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('samfw.html').read_text(errors='ignore')
-          needle='BL_F711BXXSJJZH3_F711BXXSJJZH3_MQB113546584_REV00_user_low_ship_MULTI_CERT.tar.md5.zip'
-          i=s.find(needle)
-          print('needle_offset=',i)
-          if i>=0:
-              print(s[max(0,i-8000):i+12000])
+          python3 -m pip install --user git+https://github.com/t0rzz/SamLoader-Reloaded.git
+          python3 -m samloader --help | head -n 80
+
+      - name: Probe official JZH3 FUS metadata and encrypted range
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee fus-probe.txt
+          from Cryptodome.Cipher import AES
+          from samloader import fusclient, main, imei, crypt
+
+          MODEL='SM-F711B'
+          REGION='PLS'
+          FW='F711BXXSJJZH3/F711BOXMJJZH3/F711BXXSJJZH3/F711BXXSJJZH3'
+
+          class Args:
+              command='download'
+              dev_model=MODEL
+              dev_region=REGION
+              dev_imei=None
+
+          a=Args()
+          if imei.fixup_imei(a):
+              raise SystemExit('IMEI generation failed')
+
+          client=fusclient.FUSClient()
+          path, filename, size=main.getbinaryfile(client, FW, MODEL, a.dev_imei, REGION)
+          print('MODEL=', MODEL)
+          print('REGION=', REGION)
+          print('FW=', FW)
+          print('FUS_PATH=', path)
+          print('FUS_FILENAME=', filename)
+          print('FUS_SIZE=', size)
+
+          key=crypt.getv4key(FW, MODEL, REGION, a.dev_imei)
+          if not key:
+              raise SystemExit('V4 key retrieval failed')
+          print('V4_KEY_OK=1')
+
+          main.initdownload(client, filename)
+          r=client.downloadfile(path+filename, 0, 31)
+          data=r.content
+          print('RANGE_STATUS=', r.status_code)
+          print('RANGE_LEN=', len(data))
+          print('CONTENT_RANGE=', r.headers.get('Content-Range'))
+          dec=AES.new(key, AES.MODE_ECB).decrypt(data[:16])
+          print('DEC_HEAD_HEX=', dec.hex())
+          print('DEC_HEAD_MAGIC=', repr(dec[:4]))
+          if not dec.startswith(b'PK\x03\x04'):
+              raise SystemExit('Decrypted firmware does not start with ZIP local header')
+          print('OFFICIAL_FUS_RANGE_OK=1')
           PY
-          echo '--- script src ---'
-          grep -Eo '<script[^>]+src=["'''][^"''']+' samfw.html | sed -E 's/.*src=["''']//' | sort -u | tee script-src.txt
-          mkdir -p scripts
-          while read -r src; do
-            [ -n "$src" ] || continue
-            case "$src" in
-              //*) url="https:$src" ;;
-              /*) url="https://samfw.com$src" ;;
-              http*) url="$src" ;;
-              *) url="https://samfw.com/$src" ;;
-            esac
-            fn="$(echo "$src" | tr '/?&=:.' '_' | tail -c 180)"
-            curl -fsSL --retry 2 -A 'Mozilla/5.0' "$url" -o "scripts/$fn" || true
-          done < script-src.txt
-          echo '--- JS API/download references ---'
-          grep -RniE 'download|child|firmware|bifrost|ajax|api/' scripts | head -n 600 || true
 
       - name: Upload probe result
         uses: actions/upload-artifact@v4
         with:
-          name: F711B-JZH3-APNHLOS-probe
-          path: |
-            samfw.html
-            script-src.txt
-            scripts/
-          if-no-files-found: warn
+          name: F711B-JZH3-FUS-probe
+          path: fus-probe.txt
+          if-no-files-found: error
           retention-days: 7
