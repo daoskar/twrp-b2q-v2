@@ -21,139 +21,119 @@ jobs:
       - name: Install probe deps
         run: python3 -m pip install --user pycryptodomex requests
 
-      - name: Probe current FUS protocol with JZH3
+      - name: Probe corrected Samsung FUS auth
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY' | tee fus-current-protocol.txt
-          import base64, hashlib, html, requests, xml.etree.ElementTree as ET
+          curl -fL --retry 3 'https://gist.githubusercontent.com/ungeskriptet/a4fa425ffb554a9ca72b2eafca64dcd7/raw/samfirm.py' -o /tmp/samfirm_ref.py
+          python3 - <<'PY' | tee fus-corrected-protocol.txt
+          import ast, base64, hashlib, requests, xml.etree.ElementTree as ET
           from Cryptodome.Cipher import AES
+          from Cryptodome.Util.Padding import pad, unpad
+
+          # Load only the public reference helper functions, without executing its CLI.
+          src=open('/tmp/samfirm_ref.py','r',encoding='utf-8').read()
+          tree=ast.parse(src)
+          wanted={'decryptnonce','logiccheck'}
+          body=[n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.Import,ast.ImportFrom)) and (not isinstance(n,ast.FunctionDef) or n.name in wanted)]
+          ns={}
+          exec(compile(ast.Module(body=body,type_ignores=[]),'<fus-ref>','exec'),ns,ns)
+          decryptnonce=ns['decryptnonce']
+          logiccheck=ns['logiccheck']
 
           MODEL='SM-F711B'
           REGION='PLS'
-          IMEI='356392271234560'  # synthetic SM-F711B TAC + Luhn
+          IMEI='356392271234560'
           PDA='F711BXXSJJZH3'
           CSC='F711BOXMJJZH3'
           PHONE='F711BXXSJJZH3'
-          FULL=f'{PDA}/{CSC}/{PHONE}/{PDA}'
-
-          K1='hqzdurufm2c8mf6bsjezu1qgveouv7c7'
-          K2='w13r4cvf4hctaujv'
+          VERSION=f'{PDA}/{CSC}/{PHONE}/{PDA}'
           BASE='https://neofussvr.sslcs.cdngc.net'
-          CLOUD='https://cloud-neofussvr.samsungmobile.com/NF_DownloadBinaryForMass.do'
+          CLOUD='http://cloud-neofussvr.samsungmobile.com/NF_DownloadBinaryForMass.do'
 
-          def pad(d):
-              n=16-(len(d)%16)
-              return d+bytes([n])*n
-
-          def derive_nkey(nonce):
-              if len(nonce)<16: raise RuntimeError(f'nonce too short: {len(nonce)}')
-              s=''.join(K1[ord(nonce[i])%16] for i in range(16))+K2
-              return s.encode()
-
-          def auth_header(nonce):
-              nkey=derive_nkey(nonce)
-              sig=AES.new(nkey,AES.MODE_CBC,nkey[:16]).encrypt(pad(nonce.encode()))
-              sig64=base64.b64encode(sig).decode()
-              return f'FUS nonce="{nonce}", signature="{sig64}", nc="", type="", realm="", newauth="1"'
-
-          def logic_check(nonce,target):
-              if len(nonce)<16: raise RuntimeError('nonce too short for logic_check')
-              tb=target.encode()
-              return ''.join(chr(tb[(ord(nonce[i]) & 0xF) % len(tb)]) for i in range(16))
-
-          def first_data(root, tag, required=True):
-              el=root.find('.//'+tag+'/Data')
+          def get_data(root,tag):
+              el=root.find(f'./FUSBody/Put/{tag}/Data')
               if el is None or not (el.text or '').strip():
-                  if required: raise RuntimeError('missing '+tag)
-                  return None
+                  raise RuntimeError('missing '+tag)
               return el.text.strip()
 
           s=requests.Session()
-          nr=s.post(BASE+'/NF_DownloadGenerateNonce.do',timeout=20)
+          nr=s.post(BASE+'/NF_DownloadGenerateNonce.do',headers={
+              'Authorization':'FUS nonce="", signature="", nc="", type="", realm="", newauth="1"',
+              'User-Agent':'Kies2.0_FUS','Accept':'application/xml'
+          },timeout=30)
           nr.raise_for_status()
-          nonce=nr.headers.get('NONCE') or nr.headers.get('Nonce')
-          print('NONCE_LEN=',len(nonce or ''))
-          print('NONCE_PREFIX=',(nonce or '')[:12])
-          print('SESSION_COOKIE=',bool(s.cookies))
-          if not nonce: raise RuntimeError('missing NONCE')
+          enc_nonce=nr.headers['NONCE']
+          dec_nonce,signature=decryptnonce(enc_nonce)
+          print('NONCE_OK=1 len=',len(dec_nonce))
 
-          lc=logic_check(nonce,FULL)
-          xml=f'''<?xml version="1.0" encoding="UTF-8"?>
-          <FUSMsg><FUSHdr><ProtoVer>1.0</ProtoVer></FUSHdr><FUSBody><Put>
-          <ACCESS_MODE><Data>2</Data></ACCESS_MODE>
-          <BINARY_NATURE><Data>1</Data></BINARY_NATURE>
-          <CLIENT_PRODUCT><Data>Smart Switch</Data></CLIENT_PRODUCT>
-          <CLIENT_VERSION><Data>4.3.23123_1</Data></CLIENT_VERSION>
-          <DEVICE_FW_VERSION><Data>{FULL}</Data></DEVICE_FW_VERSION>
-          <DEVICE_LOCAL_CODE><Data>{REGION}</Data></DEVICE_LOCAL_CODE>
-          <DEVICE_MODEL_NAME><Data>{MODEL}</Data></DEVICE_MODEL_NAME>
-          <DEVICE_IMEI_PUSH><Data>{IMEI}</Data></DEVICE_IMEI_PUSH>
-          <DEVICE_VER_COUNT><Data>4</Data></DEVICE_VER_COUNT>
-          <DEVICE_PDA_CODE1_VERSION><Data>{PDA}</Data></DEVICE_PDA_CODE1_VERSION>
-          <DEVICE_CSC_CODE2_VERSION><Data>{CSC}</Data></DEVICE_CSC_CODE2_VERSION>
-          <DEVICE_PHONE_FONT_VERSION><Data>{PHONE}</Data></DEVICE_PHONE_FONT_VERSION>
-          <DEVICE_CONTENTS_DATA_VERSION><Data>{PDA}</Data></DEVICE_CONTENTS_DATA_VERSION>
-          <LOGIC_CHECK><Data>{lc}</Data></LOGIC_CHECK>
-          </Put><Get><CmdID>2</CmdID><LATEST_FW_VERSION/></Get></FUSBody></FUSMsg>'''
-
-          headers={'Authorization':auth_header(nonce),'Content-Type':'application/xml','User-Agent':'Kies2.0_FUS'}
-          ir=s.post(BASE+'/NF_DownloadBinaryInform.do',headers=headers,data=xml.encode(),timeout=30)
+          xml=f'''<FUSMsg><FUSHdr><ProtoVer>1.0</ProtoVer></FUSHdr><FUSBody><Put>
+          <ACCESS_MODE><Data>2</Data></ACCESS_MODE><BINARY_NATURE><Data>1</Data></BINARY_NATURE>
+          <CLIENT_PRODUCT><Data>Smart Switch</Data></CLIENT_PRODUCT><CLIENT_VERSION><Data>4.3.23123_1</Data></CLIENT_VERSION>
+          <DEVICE_FW_VERSION><Data>{VERSION}</Data></DEVICE_FW_VERSION><DEVICE_LOCAL_CODE><Data>{REGION}</Data></DEVICE_LOCAL_CODE>
+          <DEVICE_MODEL_NAME><Data>{MODEL}</Data></DEVICE_MODEL_NAME><DEVICE_IMEI_PUSH><Data>{IMEI}</Data></DEVICE_IMEI_PUSH>
+          <LOGIC_CHECK><Data>{logiccheck(VERSION,dec_nonce)}</Data></LOGIC_CHECK>
+          </Put></FUSBody></FUSMsg>'''
+          headers={
+              'User-Agent':'Kies2.0_FUS',
+              'Authorization':f'FUS nonce="{enc_nonce}", signature="{signature}", nc="", type="", realm="", newauth="1"',
+              'Accept':'application/xml','Content-Type':'application/xml'
+          }
+          ir=s.post(BASE+'/NF_DownloadBinaryInform.do',data=xml.encode(),headers=headers,timeout=30)
           print('INFORM_HTTP=',ir.status_code)
           print('INFORM_HEAD=',repr(ir.text[:500]))
           ir.raise_for_status()
           root=ET.fromstring(ir.text)
-          status=(root.findtext('.//Status') or '').strip()
+          status=(root.findtext('./FUSBody/Results/Status') or '').strip()
           print('INFORM_STATUS=',status)
           if status!='200': raise RuntimeError('BinaryInform status '+status)
-          binary=first_data(root,'BINARY_NAME')
-          path=first_data(root,'MODEL_PATH')
-          size=int(first_data(root,'BINARY_BYTE_SIZE'))
-          logic_home=first_data(root,'LOGIC_VALUE_HOME')
-          latest=first_data(root,'LATEST_FW_VERSION',False)
+
+          binary=get_data(root,'BINARY_NAME')
+          model_path=get_data(root,'MODEL_PATH')
+          logic_value=get_data(root,'LOGIC_VALUE_FACTORY')
+          size=get_data(root,'BINARY_BYTE_SIZE')
           print('BINARY_NAME=',binary)
-          print('MODEL_PATH=',path)
+          print('MODEL_PATH=',model_path)
           print('BINARY_SIZE=',size)
-          print('LATEST_FW_VERSION=',latest)
+          key=hashlib.md5(logiccheck(VERSION,logic_value).encode()).digest()
 
-          keystr=logic_check(logic_home,FULL)
-          key=hashlib.md5(keystr.encode()).digest()
-          print('ENC4_KEY_MD5_DERIVED=1')
-
-          init_lc=logic_check(nonce,binary)
-          initxml=f'''<?xml version="1.0" encoding="UTF-8"?>
-          <FUSMsg><FUSHdr><ProtoVer>1.0</ProtoVer></FUSHdr><FUSBody><Put>
+          enc_nonce=ir.headers['NONCE']
+          dec_nonce,signature=decryptnonce(enc_nonce)
+          filename_logic=binary.split('.')[0][-16:]
+          initxml=f'''<FUSMsg><FUSHdr><ProtoVer>1.0</ProtoVer></FUSHdr><FUSBody><Put>
           <BINARY_FILE_NAME><Data>{binary}</Data></BINARY_FILE_NAME>
-          <BINARY_NATURE><Data>1</Data></BINARY_NATURE>
-          <DEVICE_LOCAL_CODE><Data>{REGION}</Data></DEVICE_LOCAL_CODE>
-          <DEVICE_MODEL_TYPE><Data>1</Data></DEVICE_MODEL_TYPE>
-          <LOGIC_CHECK><Data>{init_lc}</Data></LOGIC_CHECK>
-          </Put><Get><CmdID>2</CmdID></Get></FUSBody></FUSMsg>'''
-          br=s.post(BASE+'/NF_DownloadBinaryInitForMass.do',headers=headers,data=initxml.encode(),timeout=30)
+          <LOGIC_CHECK><Data>{logiccheck(filename_logic,dec_nonce)}</Data></LOGIC_CHECK>
+          </Put></FUSBody></FUSMsg>'''
+          headers['Authorization']=f'FUS nonce="{enc_nonce}", signature="{signature}", nc="", type="", realm="", newauth="1"'
+          br=s.post(BASE+'/NF_DownloadBinaryInitForMass.do',data=initxml.encode(),headers=headers,timeout=30)
           print('INIT_HTTP=',br.status_code)
           print('INIT_HEAD=',repr(br.text[:300]))
           br.raise_for_status()
 
-          dl_headers={'Authorization':auth_header(nonce),'User-Agent':'Kies2.0_FUS','Range':'bytes=0-31','Accept-Encoding':'identity'}
-          dr=s.get(CLOUD,params={'file':path+binary},headers=dl_headers,timeout=30)
+          enc_nonce=br.headers['NONCE']
+          dec_nonce,signature=decryptnonce(enc_nonce)
+          dh={
+              'User-Agent':'Kies2.0_FUS',
+              'Authorization':f'FUS nonce="{enc_nonce}", signature="{signature}", nc="", type="", realm="", newauth="1"',
+              'Accept':'application/xml','Content-Type':'application/xml',
+              'Range':'bytes=0-31','Accept-Encoding':'identity'
+          }
+          dr=s.get(CLOUD,params={'file':model_path+binary},headers=dh,timeout=60)
           print('RANGE_HTTP=',dr.status_code)
           print('CONTENT_RANGE=',dr.headers.get('Content-Range'))
           print('RANGE_LEN=',len(dr.content))
           dr.raise_for_status()
-          enc=dr.content[:32]
-          if len(enc)<16: raise RuntimeError('short encrypted range')
-          dec=AES.new(key,AES.MODE_ECB).decrypt(enc[:16])
-          print('DEC_HEAD_HEX=',dec.hex())
+          dec=AES.new(key,AES.MODE_ECB).decrypt(dr.content[:16])
           print('DEC_MAGIC=',repr(dec[:4]))
-          if not dec.startswith(b'PK\x03\x04'):
-              raise RuntimeError('official firmware decrypt did not yield ZIP magic')
+          if not dec.startswith(b'PK\\x03\\x04'):
+              raise RuntimeError('decrypted range is not ZIP')
           print('OFFICIAL_JZH3_FUS_OK=1')
           PY
 
-      - name: Upload current protocol probe
+      - name: Upload corrected protocol probe
         uses: actions/upload-artifact@v4
         with:
-          name: F711B-JZH3-current-FUS-probe
-          path: fus-current-protocol.txt
+          name: F711B-JZH3-corrected-FUS-probe
+          path: fus-corrected-protocol.txt
           if-no-files-found: error
           retention-days: 7
