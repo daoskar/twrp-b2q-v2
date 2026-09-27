@@ -1,13 +1,13 @@
-name: Build TWRP b2q SPCom app status test6au
+name: Build TWRP b2q SPCom status first test6av
 
 on:
   push:
     branches:
-      - test6au-spcom-app-status
+      - test6av-spcom-status-first
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6au-${{ github.ref }}
+  group: twrp-b2q-test6av-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6au device tree
+      - name: Checkout test6av device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -829,12 +829,13 @@ jobs:
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
           \t\t\tTWFunc::Exec_Cmd(
-          \t\t\t\t"echo '=== TEST6AU SPCOM APP STATUS ==='; "
-          \t\t\t\t"cat /tmp/b2q-spu-pre-keymaster 2>/dev/null || echo 'SPU pre-snapshot missing'; "
-          \t\t\t\t"echo '--- SPCom app status ---'; "
-          \t\t\t\t"/system/bin/b2q-sp-loader --status 2>&1; "
-          \t\t\t\t"echo vendor.spcom.sec_nvm_init=$(getprop vendor.spcom.sec_nvm_init); "
-          \t\t\t\t"echo vendor.spcom.spdaemon_init=$(getprop vendor.spcom.spdaemon_init); "
+          "echo '=== TEST6AV SPCOM STATUS FIRST ==='; "
+          "echo '--- CRITICAL SPCOM STATUS ---'; "
+          "/system/bin/b2q-sp-loader --status 2>&1; "
+          "echo vendor.spcom.sec_nvm_init=$(getprop vendor.spcom.sec_nvm_init); "
+          "echo vendor.spcom.spdaemon_init=$(getprop vendor.spcom.spdaemon_init); "
+          "echo '--- SPU pre-keymaster snapshot ---'; "
+          "cat /tmp/b2q-spu-pre-keymaster 2>/dev/null || echo 'SPU pre-snapshot missing'; "
           \t\t\t\t"echo '--- first stock Keymaster/SPU lines ---'; "
           \t\t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'start init sp keymaster|initialize spu|call spu_init|spu_init success|failed in intializing spu|Failed to creat SPU|spu init tread|skeymaster4dev|spcom|sec_nvm|cryptoapp|sp_keymaster' | head -n 100; "
           \t\t\t\t"echo '--- QSEE fallback transition ---'; "
@@ -1022,7 +1023,7 @@ jobs:
           grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER PRECHECK' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER BINARY READY' gui/action.cpp
-          grep -Fq 'TEST6AU SPCOM APP STATUS' gui/action.cpp
+          grep -Fq 'TEST6AV SPCOM STATUS FIRST' gui/action.cpp
           grep -Fq 'SPU PRE-KEYMASTER SNAPSHOT' gui/action.cpp
           grep -Fq 'first stock Keymaster/SPU lines' gui/action.cpp
           grep -Fq 'QSEE fallback transition' gui/action.cpp
@@ -1117,7 +1118,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6au SPCom app status + stock Keymaster flow verified'
+          echo '[b2q] test6av SPCom status first + stock Keymaster flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1157,28 +1158,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6au package
+      - name: Build Odin test6av package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6au-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6av-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6au artifact
+      - name: Upload test6av artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-spcom-app-status-test6au-${{ github.sha }}
+          name: TWRP-b2q-spcom-status-first-test6av-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6au-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6au-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6av-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6av-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
