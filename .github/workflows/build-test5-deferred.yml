@@ -806,7 +806,7 @@ jobs:
           \t\t\tTWFunc::Exec_Cmd(
           \t\t\t\t"echo '=== B2Q FIRMWARE ID ==='; "
           \t\t\t\t"echo bootloader=$(getprop ro.bootloader); echo hardware=$(getprop ro.boot.hardware); echo device=$(getprop ro.product.vendor.device); "
-          \t\t\t\t"grep -hE '^ro\\.(vendor\\.)?build\\.(fingerprint|id|version\\.incremental|version\\.security_patch)=' /vendor/build.prop /vendor/etc/build.prop /system/build.prop /system/system/build.prop 2>/dev/null | sort -u || true; "
+          \t\t\t\t"grep -hE '^ro[.](vendor[.])?build[.](fingerprint|id|version[.]incremental|version[.]security_patch)=' /vendor/build.prop /vendor/etc/build.prop /system/build.prop /system/system/build.prop 2>/dev/null | sort -u || true; "
           \t\t\t\t"echo '--- apnhlos identity ---'; AP=/dev/block/bootdevice/by-name/apnhlos; ls -l $AP 2>&1; blockdev --getsize64 $AP 2>/dev/null || true; sha256sum $AP 2>/dev/null || true; "
           \t\t\t\t"echo '=== SKEYMAST LOOKUP ==='; find /vendor/firmware_mnt/image -maxdepth 1 -type f 2>/dev/null | grep -Ei '/(skeymast|keymaste|skm|keym)' | sort || true; "
           \t\t\t\t"echo '--- firmware_mnt sample ---'; ls -1 /vendor/firmware_mnt/image 2>/dev/null | grep -Ei 'key|skm|sec|spu|crypt' | head -n 120 || true; "
