@@ -1,13 +1,13 @@
-name: Build TWRP b2q SKM alias test6ar
+name: Build TWRP b2q SKM result test6as
 
 on:
   push:
     branches:
-      - test6ar-skm-alias
+      - test6as-skm-result
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6ar-${{ github.ref }}
+  group: twrp-b2q-test6as-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6ar device tree
+      - name: Checkout test6as device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -716,12 +716,12 @@ jobs:
           \t\t\t"echo '--- current skm TA ---'; ls -l /vendor/firmware_mnt/image/skm.* 2>&1 || true; "
           \t\t\t"echo '--- modem skeymast TA ---'; ls -l /vendor/firmware-modem/image/skeymast* 2>&1 || true; "
           \t\t\t"if ls /vendor/firmware_mnt/image/skeymast* >/dev/null 2>&1; then "
-          \t\t\t"  echo QSEE_TA_SOURCE=current-apnhlos; exit 0; "
+          \t\t\t"  echo QSEE_TA_SOURCE=current-apnhlos; echo current-apnhlos > /tmp/b2q-qsee-source; exit 0; "
           \t\t\t"fi; "
           \t\t\t"if ls /vendor/firmware-modem/image/skeymast* >/dev/null 2>&1; then "
           \t\t\t"  echo QSEE_TA_SOURCE=modem-candidate; "
           \t\t\t"  mount -o bind /vendor/firmware-modem/image /vendor/firmware_mnt/image || exit 61; "
-          \t\t\t"  echo QSEE_TA_SOURCE=modem-bind; "
+          \t\t\t"  echo QSEE_TA_SOURCE=modem-bind; echo modem-bind > /tmp/b2q-qsee-source; "
           \t\t\t"  ls -l /vendor/firmware_mnt/image/skeymast* 2>&1; "
           \t\t\t"  exit 0; "
           \t\t\t"fi; "
@@ -734,12 +734,12 @@ jobs:
           \t\t\t"  for f in /tmp/b2q-fwbase/skm.*; do [ -e \\\"$f\\\" ] || continue; bn=$(basename \\\"$f\\\"); suf=${bn#skm}; ln -sf \\\"$f\\\" \\\"/tmp/b2q-fwimage/skeymast$suf\\\" || exit 65; done; "
           \t\t\t"  [ -e /tmp/b2q-fwimage/skeymast.mdt ] || exit 65; "
           \t\t\t"  mount -o bind /tmp/b2q-fwimage /vendor/firmware_mnt/image || exit 66; "
-          \t\t\t"  echo QSEE_TA_SOURCE=skm-alias; "
+          \t\t\t"  echo QSEE_TA_SOURCE=skm-alias; echo skm-alias > /tmp/b2q-qsee-source; "
           \t\t\t"  echo '--- aliased skeymast TA ---'; ls -l /vendor/firmware_mnt/image/skeymast.* 2>&1 || true; "
           \t\t\t"  echo '--- backing skm TA ---'; ls -l /tmp/b2q-fwbase/skm.* 2>&1 || true; "
           \t\t\t"  exit 0; "
           \t\t\t"fi; "
-          \t\t\t"echo QSEE_TA_SOURCE=missing-skeymast-and-skm; "
+          \t\t\t"echo QSEE_TA_SOURCE=missing-skeymast-and-skm; echo missing > /tmp/b2q-qsee-source; "
           \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 -iname 'skeymast*' 2>/dev/null; "
           \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 -iname 'skm.*' 2>/dev/null; "
           \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 -iname 'keymaste*' 2>/dev/null | head -n 160; "
@@ -818,6 +818,11 @@ jobs:
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
           \t\t\tTWFunc::Exec_Cmd(
+          \t\t\t\t"echo '=== TEST6AS SKM RESULT ==='; "
+          \t\t\t\t"echo -n 'ta_source='; cat /tmp/b2q-qsee-source 2>/dev/null || echo unknown; "
+          \t\t\t\t"echo '--- skm files ---'; ls -l /tmp/b2q-fwbase/skm.* /vendor/firmware_mnt/image/skm.* 2>&1 || true; "
+          \t\t\t\t"echo '--- skeymast files ---'; ls -l /vendor/firmware_mnt/image/skeymast.* 2>&1 || true; "
+          \t\t\t\t"echo '--- focused QSEE result ---'; logcat -b all -d -v brief 2>/dev/null | grep -Ei 'QSEECOMAPI|QSEECom|keymaster_tee|skeymaster4dev|skeymast|trustlet|Loading image failed|cannot open|signature|auth|verify' | tail -n 60; "
           \t\t\t\t"echo '=== B2Q FIRMWARE ID ==='; "
           \t\t\t\t"echo bootloader=$(getprop ro.bootloader); echo hardware=$(getprop ro.boot.hardware); echo device=$(getprop ro.product.vendor.device); "
           \t\t\t\t"grep -hE '^ro[.](vendor[.])?build[.](fingerprint|id|version[.]incremental|version[.]security_patch)=' /vendor/build.prop /vendor/etc/build.prop /system/build.prop /system/system/build.prop 2>/dev/null | sort -u || true; "
@@ -1000,6 +1005,9 @@ jobs:
           grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER PRECHECK' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER BINARY READY' gui/action.cpp
+          grep -Fq 'TEST6AS SKM RESULT' gui/action.cpp
+          grep -Fq 'ta_source=' gui/action.cpp
+          grep -Fq 'focused QSEE result' gui/action.cpp
           grep -Fq 'SKM ALIAS CANDIDATE' gui/action.cpp
           grep -Fq 'QSEE_TA_SOURCE=skm-alias' gui/action.cpp
           grep -Fq 'mount -o bind /tmp/b2q-fwimage /vendor/firmware_mnt/image' gui/action.cpp
@@ -1088,7 +1096,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6ar SKM alias + stock Keymaster flow verified'
+          echo '[b2q] test6as compact SKM result + stock Keymaster flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1128,28 +1136,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6ar package
+      - name: Build Odin test6as package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6ar-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6as-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6ar artifact
+      - name: Upload test6as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-skm-alias-test6ar-${{ github.sha }}
+          name: TWRP-b2q-skm-result-test6as-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6ar-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6ar-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6as-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6as-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
