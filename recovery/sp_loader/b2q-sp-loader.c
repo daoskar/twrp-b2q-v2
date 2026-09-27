@@ -1,10 +1,14 @@
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 
 typedef bool (*spcom_is_app_loaded_fn)(const char *);
 typedef bool (*spcom_is_sp_subsystem_link_up_fn)(void);
@@ -20,6 +24,48 @@ static int wait_link(spcom_is_sp_subsystem_link_up_fn is_link_up, int timeout_ms
     return -1;
 }
 
+static void probe_node(const char *path) {
+    struct stat st;
+    if (lstat(path, &st) != 0) {
+        printf("[b2q-sp-loader] node %s stat=missing errno=%d (%s)\n",
+               path, errno, strerror(errno));
+        return;
+    }
+
+    printf("[b2q-sp-loader] node %s mode=%#o type=%s major=%u minor=%u uid=%u gid=%u\n",
+           path, (unsigned)(st.st_mode & 07777),
+           S_ISCHR(st.st_mode) ? "char" :
+           S_ISBLK(st.st_mode) ? "block" :
+           S_ISREG(st.st_mode) ? "file" :
+           S_ISLNK(st.st_mode) ? "symlink" : "other",
+           S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode) ? major(st.st_rdev) : 0,
+           S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode) ? minor(st.st_rdev) : 0,
+           (unsigned)st.st_uid, (unsigned)st.st_gid);
+
+    errno = 0;
+    int fd = open(path, O_RDWR | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) {
+        printf("[b2q-sp-loader] node %s open=fail errno=%d (%s)\n",
+               path, errno, strerror(errno));
+        return;
+    }
+    printf("[b2q-sp-loader] node %s open=ok fd=%d\n", path, fd);
+    close(fd);
+}
+
+static void probe_nodes(void) {
+    static const char *const nodes[] = {
+        "/dev/sp_kernel",
+        "/dev/sp_keymaster",
+        "/dev/cryptoapp",
+        "/dev/asym_cryptoapp",
+        "/dev/qsee_ipc_irq_spss",
+        "/dev/ion",
+    };
+    for (size_t i = 0; i < sizeof(nodes) / sizeof(nodes[0]); ++i)
+        probe_node(nodes[i]);
+}
+
 static int wait_app(spcom_is_app_loaded_fn is_loaded, const char *name, int timeout_ms) {
     for (int elapsed = 0; elapsed < timeout_ms; elapsed += 50) {
         if (is_loaded(name))
@@ -31,8 +77,13 @@ static int wait_app(spcom_is_app_loaded_fn is_loaded, const char *name, int time
 
 int main(int argc, char **argv) {
     bool status_only = (argc == 2 && strcmp(argv[1], "--status") == 0);
+    bool probe_only = (argc == 2 && strcmp(argv[1], "--probe-nodes") == 0);
+    if (probe_only) {
+        probe_nodes();
+        return 0;
+    }
     if (!status_only && (argc < 3 || argc > 4)) {
-        fprintf(stderr, "usage: %s --status | <channel> <sig_path> [swap_size]\n", argv[0]);
+        fprintf(stderr, "usage: %s --status | --probe-nodes | <channel> <sig_path> [swap_size]\n", argv[0]);
         return 64;
     }
 
