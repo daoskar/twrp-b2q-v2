@@ -1,0 +1,174 @@
+name: Probe stock F711B JZH3 APNHLOS
+
+on:
+  push:
+    branches:
+      - probe-jzh3-stock-apnhlos
+  workflow_dispatch:
+
+concurrency:
+  group: probe-jzh3-stock-apnhlos
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full unzip lz4 file dosfstools mtools python3-pip
+          python3 -m pip install --break-system-packages git+https://github.com/samloader/samloader.git
+          samloader --help | head -n 80
+
+      - name: Resolve latest PLS firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="$(samloader -m SM-F711B -r PLS checkupdate | tail -n 1 | tr -d '\r')"
+          echo "FUS_VERSION=$VER" | tee fus-version.txt
+          case "$VER" in
+            F711BXXSJJZH3/*) ;;
+            *)
+              echo "Latest PLS firmware is not expected JZH3: $VER" >&2
+              exit 20
+              ;;
+          esac
+          echo "FUS_VERSION=$VER" >> "$GITHUB_ENV"
+
+      - name: Download official Samsung firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p firmware
+          samloader -m SM-F711B -r PLS download -v "$FUS_VERSION" -O firmware
+          ENC="$(find firmware -maxdepth 1 -type f \( -name '*.enc4' -o -name '*.enc2' \) | head -n 1)"
+          test -n "$ENC"
+          echo "Encrypted package: $ENC"
+          ls -lh "$ENC"
+          echo "ENC=$ENC" >> "$GITHUB_ENV"
+          if [[ "$ENC" == *.enc4 ]]; then
+            echo "ENCVER=4" >> "$GITHUB_ENV"
+          else
+            echo "ENCVER=2" >> "$GITHUB_ENV"
+          fi
+
+      - name: Decrypt official firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          samloader -m SM-F711B -r PLS decrypt -v "$FUS_VERSION" -V "$ENCVER" -i "$ENC" -o firmware/F711B_JZH3.zip
+          unzip -l firmware/F711B_JZH3.zip | tee firmware-zip-list.txt
+          rm -f "$ENC"
+          df -h /
+
+      - name: Extract BL and locate APNHLOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p parts work
+          unzip -j firmware/F711B_JZH3.zip 'BL_*.tar.md5' -d parts
+          BL="$(find parts -maxdepth 1 -type f -name 'BL_*.tar.md5' | head -n 1)"
+          test -n "$BL"
+          echo "BL=$BL"
+          tar -tf "$BL" | tee bl-list.txt
+          MEMBER="$(tar -tf "$BL" | grep -Ei '(^|/)(apnhlos|non-hlos)([^/]*)?(\.img)?(\.lz4)?$' | head -n 1 || true)"
+          if [ -z "$MEMBER" ]; then
+            echo "APNHLOS not found in BL; checking AP package"
+            unzip -j firmware/F711B_JZH3.zip 'AP_*.tar.md5' -d parts
+            AP="$(find parts -maxdepth 1 -type f -name 'AP_*.tar.md5' | head -n 1)"
+            test -n "$AP"
+            tar -tf "$AP" | tee ap-list.txt
+            MEMBER="$(tar -tf "$AP" | grep -Ei '(^|/)(apnhlos|non-hlos)([^/]*)?(\.img)?(\.lz4)?$' | head -n 1 || true)"
+            SRC="$AP"
+          else
+            SRC="$BL"
+          fi
+          if [ -z "$MEMBER" ]; then
+            echo "No APNHLOS/NON-HLOS member found" >&2
+            grep -Eai 'apnhlos|non-hlos|firmware|modem' bl-list.txt ap-list.txt 2>/dev/null | head -n 300 || true
+            exit 30
+          fi
+          echo "APNHLOS_MEMBER=$MEMBER" | tee apnhlos-member.txt
+          echo "APNHLOS_CONTAINER=$SRC" | tee -a apnhlos-member.txt
+          tar -xf "$SRC" -C work "$MEMBER"
+          RAW="work/$MEMBER"
+          if [[ "$RAW" == *.lz4 ]]; then
+            OUT="${RAW%.lz4}"
+            lz4 -d "$RAW" "$OUT"
+            RAW="$OUT"
+          fi
+          echo "RAW_APNHLOS=$RAW" >> "$GITHUB_ENV"
+          file "$RAW" | tee apnhlos-file.txt
+          stat -c 'size=%s' "$RAW" | tee apnhlos-size.txt
+          sha256sum "$RAW" | tee apnhlos-sha256.txt
+
+      - name: Inspect APNHLOS filesystem and extract SKeymaster TA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p apnhlos_fs result
+          7z l "$RAW_APNHLOS" | tee apnhlos-7z-list.txt
+          7z x -y "$RAW_APNHLOS" -oapnhlos_fs >/tmp/7z-extract.log
+          cat /tmp/7z-extract.log
+          find apnhlos_fs -maxdepth 4 -type f | sort > apnhlos-files.txt
+          echo '=== keymaster-related APNHLOS files ===' | tee keymaster-files.txt
+          grep -Ei '/(skeymast|keymaste|skm|keym|crypt|asym)' apnhlos-files.txt | tee -a keymaster-files.txt || true
+          find apnhlos_fs -type f -iname 'skeymast*' -print -exec cp -v {} result/ \;
+          COUNT="$(find result -maxdepth 1 -type f -name 'skeymast*' | wc -l)"
+          echo "skeymast_count=$COUNT" | tee skeymast-result.txt
+          if [ "$COUNT" -gt 0 ]; then
+            sha256sum result/skeymast* | tee skeymast-sha256.txt
+            tar -C result -czf stock-b2q-JZH3-skeymast.tar.gz .
+          else
+            echo 'No skeymast files in stock JZH3 APNHLOS' | tee -a skeymast-result.txt
+          fi
+
+      - name: Compare with device APNHLOS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'Device test6aq observed:'
+            echo 'bootloader=F711BXXSIJZE5'
+            echo 'vendor_incremental=F711BXXSJJZH3'
+            echo 'device_apnhlos_size=199229440'
+            echo
+            echo 'Official JZH3 APNHLOS:'
+            cat apnhlos-size.txt
+            cat apnhlos-sha256.txt
+            cat skeymast-result.txt
+          } | tee comparison.txt
+
+      - name: Upload probe result
+        uses: actions/upload-artifact@v4
+        with:
+          name: F711B-JZH3-APNHLOS-probe
+          path: |
+            fus-version.txt
+            firmware-zip-list.txt
+            bl-list.txt
+            ap-list.txt
+            apnhlos-member.txt
+            apnhlos-file.txt
+            apnhlos-size.txt
+            apnhlos-sha256.txt
+            apnhlos-7z-list.txt
+            apnhlos-files.txt
+            keymaster-files.txt
+            skeymast-result.txt
+            skeymast-sha256.txt
+            comparison.txt
+            stock-b2q-JZH3-skeymast.tar.gz
+          if-no-files-found: warn
+          retention-days: 7
