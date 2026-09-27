@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6aq device tree
+      - name: Checkout test6ar device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -985,8 +985,8 @@ jobs:
           grep -Fq 'FORCED KEYMASTER APP TEST START' gui/action.cpp
           grep -Fq 'FORCED SP KEYMASTER LOAD OK' gui/action.cpp
           grep -Fq 'SP KEYMASTER NODE=missing (app already loaded is acceptable)' gui/action.cpp
-          grep -Fq 'SKEYMAST TA CHECK' gui/action.cpp
-          grep -Fq 'SKEYMAST TA unavailable' gui/action.cpp
+          grep -Fq 'SKEYMAST / SKM TA CHECK' gui/action.cpp
+          grep -Fq 'SKEYMAST/SKM TA unavailable' gui/action.cpp
           grep -Fq 'SPU HANDOFF TRACE START' gui/action.cpp
           grep -Fq 'KEYMASTER BLOCK POINT' gui/action.cpp
           grep -Fq 'SPU VS QSEE TRACE' gui/action.cpp
