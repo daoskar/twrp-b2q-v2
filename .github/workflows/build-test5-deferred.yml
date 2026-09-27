@@ -1,13 +1,13 @@
-name: Build TWRP b2q SPU first trace test6at
+name: Build TWRP b2q SPCom app status test6au
 
 on:
   push:
     branches:
-      - test6at-spu-first-trace
+      - test6au-spcom-app-status
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6at-${{ github.ref }}
+  group: twrp-b2q-test6au-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6at device tree
+      - name: Checkout test6au device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -831,7 +831,11 @@ jobs:
           \t\t\tTWFunc::Exec_Cmd(
           \t\t\t\t"echo '=== TEST6AT SPU FIRST TRACE ==='; "
           \t\t\t\t"cat /tmp/b2q-spu-pre-keymaster 2>/dev/null || echo 'SPU pre-snapshot missing'; "
-          \t\t\t\t"echo '--- first stock Keymaster/SPU lines ---'; "
+          \t\t\t\t"echo '--- SPCom app status ---'; "
+				"/system/bin/b2q-sp-loader --status 2>&1; "
+				"echo vendor.spcom.sec_nvm_init=$(getprop vendor.spcom.sec_nvm_init); "
+				"echo vendor.spcom.spdaemon_init=$(getprop vendor.spcom.spdaemon_init); "
+				"echo '--- first stock Keymaster/SPU lines ---'; "
           \t\t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'start init sp keymaster|initialize spu|call spu_init|spu_init success|failed in intializing spu|Failed to creat SPU|spu init tread|skeymaster4dev|spcom|sec_nvm|cryptoapp|sp_keymaster' | head -n 100; "
           \t\t\t\t"echo '--- QSEE fallback transition ---'; "
           \t\t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'trying to open skeymaster TA|cannot open skeymaster TA|QSEECom_start_app|Loading image failed|keymaster_tee' | head -n 40; "
@@ -1023,6 +1027,7 @@ jobs:
           grep -Fq 'first stock Keymaster/SPU lines' gui/action.cpp
           grep -Fq 'QSEE fallback transition' gui/action.cpp
           grep -Fq 'call spu_init' gui/action.cpp
+          grep -Fq 'status sp_keymaster=%d' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
           grep -Fq 'ta_source=' gui/action.cpp
           grep -Fq 'SKM ALIAS CANDIDATE' gui/action.cpp
           grep -Fq 'QSEE_TA_SOURCE=skm-alias' gui/action.cpp
@@ -1112,7 +1117,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6at SPU-first trace + stock Keymaster flow verified'
+          echo '[b2q] test6au SPCom app status + stock Keymaster flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1152,28 +1157,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6at package
+      - name: Build Odin test6au package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6at-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6au-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6at artifact
+      - name: Upload test6au artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-spu-first-trace-test6at-${{ github.sha }}
+          name: TWRP-b2q-spcom-app-status-test6au-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6at-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6at-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6au-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6au-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
