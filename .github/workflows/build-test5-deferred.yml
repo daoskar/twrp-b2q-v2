@@ -1,13 +1,13 @@
-name: Build TWRP b2q SPCom status first test6av
+name: Build TWRP b2q kernel events test6aw
 
 on:
   push:
     branches:
-      - test6av-spcom-status-first
+      - test6aw-kernel-events
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6av-${{ github.ref }}
+  group: twrp-b2q-test6aw-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6av device tree
+      - name: Checkout test6aw device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -803,6 +803,7 @@ jobs:
           \t\tandroid::base::SetProperty("ctl.stop", "vendor.keymaster-4-0");
           \t\tusleep(200000);
           \t\tTWFunc::Exec_Cmd(
+          \t\t\t"logcat -b all -d -v brief 2>/dev/null | grep -Ei 'spdaemon|sec_nvm|spcom|spu|spss|nvm_ready|spu_ready|cryptoapp|sp_keymaster|ion' > /tmp/b2q-spu-init-log 2>/dev/null || true; "
           \t\t\t"echo '=== SPU PRE-KEYMASTER SNAPSHOT ===' > /tmp/b2q-spu-pre-keymaster; "
           \t\t\t"echo spdaemon=$(getprop init.svc.vendor.spdaemon) >> /tmp/b2q-spu-pre-keymaster; "
           \t\t\t"echo sec_nvm=$(getprop init.svc.vendor.sec_nvm) >> /tmp/b2q-spu-pre-keymaster; "
@@ -829,11 +830,14 @@ jobs:
           \t\tif (keymaster_hal == nullptr) {
           \t\t\tstd::string km_diag;
           \t\t\tTWFunc::Exec_Cmd(
-          "echo '=== TEST6AV SPCOM STATUS FIRST ==='; "
+          "echo '=== TEST6AW KERNEL EVENT STATUS ==='; "
           "echo '--- CRITICAL SPCOM STATUS ---'; "
           "/system/bin/b2q-sp-loader --status 2>&1; "
+          "echo '--- LEGACY SPCOM PROPS (expected unused on FEATURE_KERNEL_EVENTS builds) ---'; "
           "echo vendor.spcom.sec_nvm_init=$(getprop vendor.spcom.sec_nvm_init); "
           "echo vendor.spcom.spdaemon_init=$(getprop vendor.spcom.spdaemon_init); "
+          "echo '--- PRE-KEYMASTER SPU INIT LOG ---'; "
+          "cat /tmp/b2q-spu-init-log 2>/dev/null || echo 'SPU init log missing'; "
           "echo '--- SPU pre-keymaster snapshot ---'; "
           "cat /tmp/b2q-spu-pre-keymaster 2>/dev/null || echo 'SPU pre-snapshot missing'; "
           \t\t\t\t"echo '--- first stock Keymaster/SPU lines ---'; "
@@ -1023,12 +1027,17 @@ jobs:
           grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER PRECHECK' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER BINARY READY' gui/action.cpp
-          grep -Fq 'TEST6AV SPCOM STATUS FIRST' gui/action.cpp
+          grep -Fq 'TEST6AW KERNEL EVENT STATUS' gui/action.cpp
           grep -Fq 'SPU PRE-KEYMASTER SNAPSHOT' gui/action.cpp
           grep -Fq 'first stock Keymaster/SPU lines' gui/action.cpp
           grep -Fq 'QSEE fallback transition' gui/action.cpp
           grep -Fq 'call spu_init' gui/action.cpp
           grep -Fq 'status sp_keymaster=%d' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq 'status spu_ready_rc=%d' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq 'status nvm_ready_rc=%d' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq 'spcom_wait_for_nvm_ready' "$DEVICE/recovery/sp_loader/b2q-sp-loader.c"
+          grep -Fq 'PRE-KEYMASTER SPU INIT LOG' gui/action.cpp
+          grep -Fq '/tmp/b2q-spu-init-log' gui/action.cpp
           grep -Fq 'ta_source=' gui/action.cpp
           grep -Fq 'SKM ALIAS CANDIDATE' gui/action.cpp
           grep -Fq 'QSEE_TA_SOURCE=skm-alias' gui/action.cpp
@@ -1118,7 +1127,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6av SPCom status first + stock Keymaster flow verified'
+          echo '[b2q] test6aw kernel-event readiness + stock Keymaster flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1158,28 +1167,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6av package
+      - name: Build Odin test6aw package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6av-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6aw-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6av artifact
+      - name: Upload test6aw artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-spcom-status-first-test6av-${{ github.sha }}
+          name: TWRP-b2q-kernel-events-test6aw-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6av-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6av-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6aw-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6aw-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
