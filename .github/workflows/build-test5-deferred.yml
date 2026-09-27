@@ -731,7 +731,7 @@ jobs:
           \t\t\t"  rm -rf /tmp/b2q-fwbase /tmp/b2q-fwimage; mkdir -p /tmp/b2q-fwbase /tmp/b2q-fwimage; "
           \t\t\t"  mount -o bind /vendor/firmware_mnt/image /tmp/b2q-fwbase || exit 64; "
           \t\t\t"  for f in /tmp/b2q-fwbase/*; do [ -e \\\"$f\\\" ] || continue; ln -s \\\"$f\\\" \\\"/tmp/b2q-fwimage/$(basename \\\"$f\\\")\\\" || exit 65; done; "
-          \t\t\t"  for f in /tmp/b2q-fwbase/skm.*; do [ -e \\\"$f\\\" ] || continue; bn=$(basename \\\"$f\\\"); suf=\\${bn#skm}; ln -sf \\\"$f\\\" \\\"/tmp/b2q-fwimage/skeymast$suf\\\" || exit 65; done; "
+          \t\t\t"  for f in /tmp/b2q-fwbase/skm.*; do [ -e \\\"$f\\\" ] || continue; bn=$(basename \\\"$f\\\"); suf=${bn#skm}; ln -sf \\\"$f\\\" \\\"/tmp/b2q-fwimage/skeymast$suf\\\" || exit 65; done; "
           \t\t\t"  [ -e /tmp/b2q-fwimage/skeymast.mdt ] || exit 65; "
           \t\t\t"  mount -o bind /tmp/b2q-fwimage /vendor/firmware_mnt/image || exit 66; "
           \t\t\t"  echo QSEE_TA_SOURCE=skm-alias; "
@@ -740,7 +740,9 @@ jobs:
           \t\t\t"  exit 0; "
           \t\t\t"fi; "
           \t\t\t"echo QSEE_TA_SOURCE=missing-skeymast-and-skm; "
-          \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 \\( -iname 'skeymast*' -o -iname 'skm.*' -o -iname 'keymaste*' \\) 2>/dev/null | head -n 160; "
+          \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 -iname 'skeymast*' 2>/dev/null; "
+          \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 -iname 'skm.*' 2>/dev/null; "
+          \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 -iname 'keymaste*' 2>/dev/null | head -n 160; "
           \t\t\t"exit 63",
           \t\t\tqsee_fw_diag, true);
           \t\tLOGINFO("b2q: Samsung QSEE skeymast/SKM diagnostics:\\n%s\\n", qsee_fw_diag.c_str());
