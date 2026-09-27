@@ -31,24 +31,17 @@ jobs:
           set -euo pipefail
           python3 - <<'PY' | tee fus-probe.txt
           from Cryptodome.Cipher import AES
-          from samloader import fusclient, main, imei, crypt
+          from samloader import fusclient, main, crypt
 
           MODEL='SM-F711B'
           REGION='PLS'
           FW='F711BXXSJJZH3/F711BOXMJJZH3/F711BXXSJJZH3/F711BXXSJJZH3'
 
-          class Args:
-              command='download'
-              dev_model=MODEL
-              dev_region=REGION
-              dev_imei=None
-
-          a=Args()
-          if imei.fixup_imei(a):
-              raise SystemExit('IMEI generation failed')
+          IMEI='356392271234560'  # synthetic SM-F711B TAC + Luhn, not a real device IMEI
+          print('SYNTHETIC_IMEI_TAC=', IMEI[:8])
 
           client=fusclient.FUSClient()
-          path, filename, size=main.getbinaryfile(client, FW, MODEL, a.dev_imei, REGION)
+          path, filename, size=main.getbinaryfile(client, FW, MODEL, IMEI, REGION)
           print('MODEL=', MODEL)
           print('REGION=', REGION)
           print('FW=', FW)
@@ -56,7 +49,7 @@ jobs:
           print('FUS_FILENAME=', filename)
           print('FUS_SIZE=', size)
 
-          key=crypt.getv4key(FW, MODEL, REGION, a.dev_imei)
+          key=crypt.getv4key(FW, MODEL, REGION, IMEI)
           if not key:
               raise SystemExit('V4 key retrieval failed')
           print('V4_KEY_OK=1')
