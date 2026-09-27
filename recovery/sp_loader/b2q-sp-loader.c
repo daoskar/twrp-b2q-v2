@@ -9,6 +9,7 @@
 typedef bool (*spcom_is_app_loaded_fn)(const char *);
 typedef bool (*spcom_is_sp_subsystem_link_up_fn)(void);
 typedef int (*spcom_wait_for_spu_ready_fn)(uint32_t);
+typedef int (*spcom_wait_for_nvm_ready_fn)(uint32_t);
 typedef int (*spcom_load_app_fn)(const char *, const char *, size_t);
 
 static int wait_link(spcom_is_sp_subsystem_link_up_fn is_link_up, int timeout_ms) {
@@ -52,12 +53,14 @@ int main(int argc, char **argv) {
         (spcom_is_sp_subsystem_link_up_fn)dlsym(h, "spcom_is_sp_subsystem_link_up");
     spcom_wait_for_spu_ready_fn wait_spu_ready =
         (spcom_wait_for_spu_ready_fn)dlsym(h, "spcom_wait_for_spu_ready");
+    spcom_wait_for_nvm_ready_fn wait_nvm_ready =
+        (spcom_wait_for_nvm_ready_fn)dlsym(h, "spcom_wait_for_nvm_ready");
     spcom_load_app_fn load_app =
         (spcom_load_app_fn)dlsym(h, "spcom_load_app");
 
     if (!is_loaded || !is_link_up || !wait_spu_ready || !load_app) {
-        fprintf(stderr, "[b2q-sp-loader] missing libspcom symbols: loaded=%p link=%p spu_ready=%p load=%p\n",
-                (void *)is_loaded, (void *)is_link_up, (void *)wait_spu_ready, (void *)load_app);
+        fprintf(stderr, "[b2q-sp-loader] missing libspcom symbols: loaded=%p link=%p spu_ready=%p nvm_ready=%p load=%p\n",
+                (void *)is_loaded, (void *)is_link_up, (void *)wait_spu_ready, (void *)wait_nvm_ready, (void *)load_app);
         dlclose(h);
         return 66;
     }
@@ -67,6 +70,23 @@ int main(int argc, char **argv) {
         printf("[b2q-sp-loader] status asym_cryptoapp=%d\n", is_loaded("asym_cryptoapp") ? 1 : 0);
         printf("[b2q-sp-loader] status cryptoapp=%d\n", is_loaded("cryptoapp") ? 1 : 0);
         printf("[b2q-sp-loader] status sp_keymaster=%d\n", is_loaded("sp_keymaster") ? 1 : 0);
+
+        int spu_ready_rc = wait_spu_ready(1);
+        printf("[b2q-sp-loader] status spu_ready_rc=%d", spu_ready_rc);
+        if (spu_ready_rc < 0 && -spu_ready_rc > 0 && -spu_ready_rc < 256)
+            printf(" (%s)", strerror(-spu_ready_rc));
+        printf("\n");
+
+        if (wait_nvm_ready) {
+            int nvm_ready_rc = wait_nvm_ready(1);
+            printf("[b2q-sp-loader] status nvm_ready_rc=%d", nvm_ready_rc);
+            if (nvm_ready_rc < 0 && -nvm_ready_rc > 0 && -nvm_ready_rc < 256)
+                printf(" (%s)", strerror(-nvm_ready_rc));
+            printf("\n");
+        } else {
+            printf("[b2q-sp-loader] status nvm_ready_rc=unavailable\n");
+        }
+
         dlclose(h);
         return 0;
     }
