@@ -16,248 +16,222 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
-      - name: Install probe deps
-        run: python3 -m pip install --user pycryptodomex requests
-
-      - name: Fetch current Bifrost FUS reference
+      - name: Install browser + archive tools
         shell: bash
         run: |
           set -euo pipefail
-          curl -fL --retry 3 https://raw.githubusercontent.com/zall35/SamFW/master/common/src/commonMain/kotlin/tk/zwander/common/tools/CryptUtils.kt -o /tmp/CryptUtils.kt
-          curl -fL --retry 3 https://raw.githubusercontent.com/zall35/SamFW/master/common/src/commonMain/moko-resources/files/tacs.csv -o /tmp/tacs.csv
-          python3 - <<'PY'
-          count=0
-          for line in open('/tmp/tacs.csv','r',encoding='utf-8'):
-              if 'SM-F711B' in line:
-                  print(line.rstrip())
-                  count += 1
-                  if count == 5:
-                      break
-          if count == 0:
-              raise SystemExit('SM-F711B TAC not found')
-          PY
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full unzip lz4 file
+          python3 -m pip install --user playwright
+          python3 -m playwright install --with-deps chromium
 
-      - name: Probe JZH3 using current Bifrost auth semantics
+      - name: Download JZH3 BL in real browser
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY' | tee fus-bifrost-probe.txt
-          import base64, hashlib, re, requests, xml.etree.ElementTree as ET
-          from Cryptodome.Cipher import AES
+          mkdir -p probe downloads
+          python3 - <<'PY' | tee probe/browser-probe.txt
+          import json, os, re, sys, time
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-          MODEL='SM-F711B'
-          REGION='PLS'
-          PDA='F711BXXSJJZH3'
-          CSC='F711BOXMJJZH3'
-          PHONE='F711BXXSJJZH3'
-          DATA=PDA
-          FW=f'{PDA}/{CSC}/{PHONE}/{DATA}'
-          BASE='https://neofussvr.sslcs.cdngc.net'
-          CLOUD='http://cloud-neofussvr.samsungmobile.com/NF_DownloadBinaryForMass.do'
+          PAGE='https://samfw.com/firmware/SM-F711B/PLS/F711BXXSJJZH3'
+          BL='BL_F711BXXSJJZH3_F711BXXSJJZH3_MQB113546584_REV00_user_low_ship_MULTI_CERT.tar.md5.zip'
+          outdir=Path('downloads')
+          outdir.mkdir(exist_ok=True)
 
-          # Pull public FUS constants from current Bifrost source at runtime.
-          src=open('/tmp/CryptUtils.kt','r',encoding='utf-8').read()
-          m1=re.search(r'KEY_1\s*=\s*"([^"]+)"',src)
-          m2=re.search(r'KEY_2\s*=\s*"([^"]+)"',src)
-          if not (m1 and m2):
-              raise RuntimeError('could not parse Bifrost FUS keys')
-          KEY1=m1.group(1)
-          KEY2=m2.group(1)
-          print('BIFROST_KEYS_PARSED=1')
+          with sync_playwright() as p:
+              browser=p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+              ctx=browser.new_context(
+                  accept_downloads=True,
+                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+                  viewport={'width':1440,'height':1000},
+                  locale='en-US',
+              )
+              page=ctx.new_page()
+              responses=[]
+              def on_response(resp):
+                  u=resp.url
+                  if any(k in u.lower() for k in ['download','firmware','samfw','drive','file']):
+                      responses.append((resp.status,u))
+              page.on('response', on_response)
 
-          # Use a real SM-F711B TAC from Bifrost's current database.
-          tac=None
-          for line in open('/tmp/tacs.csv','r',encoding='utf-8'):
-              if 'SM-F711B' in line:
-                  tac=line.split(',',1)[0].strip()
-                  break
-          if not tac or len(tac)!=8:
-              raise RuntimeError('SM-F711B TAC not found')
+              print('OPEN', PAGE, flush=True)
+              r=page.goto(PAGE, wait_until='domcontentloaded', timeout=60000)
+              print('PAGE_HTTP=', r.status if r else None, flush=True)
+              page.wait_for_timeout(5000)
+              print('TITLE=', page.title(), flush=True)
+              print('URL=', page.url, flush=True)
+              html=page.content()
+              Path('probe/page.html').write_text(html, encoding='utf-8')
+              page.screenshot(path='probe/page.png', full_page=False)
 
-          def luhn_digit(first14):
-              digits=[int(x) for x in first14]
-              total=0
-              for i,d in enumerate(digits):
-                  if i%2==1:
-                      d*=2
-                      if d>9: d-=9
-                  total+=d
-              return str((10-(total%10))%10)
+              if BL not in html:
+                  print('BL_FILENAME_NOT_IN_DOM=1', flush=True)
+                  print('BODY_HEAD=', page.locator('body').inner_text()[:4000], flush=True)
+                  browser.close()
+                  raise SystemExit(20)
 
-          first14=tac+'000001'
-          imei=first14+luhn_digit(first14)
-          print('IMEI_TAC=',tac)
-          print('IMEI_LAST4=',imei[-4:])
+              needle=page.get_by_text(BL, exact=True)
+              print('BL_TEXT_COUNT=', needle.count(), flush=True)
+              if needle.count()==0:
+                  raise SystemExit(21)
+              el=needle.first
+              el.scroll_into_view_if_needed()
+              page.wait_for_timeout(500)
 
-          def custom_unpad(d):
-              if not d:
-                  raise RuntimeError('empty decrypted nonce')
-              last=d[-1]
-              pad_index=len(d)-(last % len(d))
-              if pad_index < 0 or pad_index > len(d):
-                  raise RuntimeError(f'invalid custom pad index {pad_index}')
-              return d[:pad_index]
+              # Climb to a useful row/container around the BL filename.
+              row=el.locator('xpath=ancestor::tr[1]')
+              if row.count()==0:
+                  row=el.locator('xpath=ancestor::*[contains(@class,"row")][1]')
+              if row.count()==0:
+                  row=el.locator('xpath=..')
+              row_html=row.evaluate('(e)=>e.outerHTML')
+              Path('probe/bl-row.html').write_text(row_html, encoding='utf-8')
+              print('ROW_TEXT=', row.inner_text()[:3000], flush=True)
 
-          def aes_cbc_decrypt(data,key):
-              return AES.new(key,AES.MODE_CBC,key[:16]).decrypt(data)
+              controls=row.locator('a,button,[onclick],[data-url],[data-href],[data-link]')
+              print('CONTROL_COUNT=', controls.count(), flush=True)
+              metas=[]
+              for i in range(controls.count()):
+                  c=controls.nth(i)
+                  try:
+                      meta=c.evaluate('''e => ({
+                        tag:e.tagName, text:(e.innerText||e.textContent||'').trim(),
+                        href:e.href||e.getAttribute('href'),
+                        onclick:e.getAttribute('onclick'),
+                        id:e.id||null, cls:e.className||null,
+                        dataset:Object.fromEntries(Object.entries(e.dataset||{}))
+                      })''')
+                      metas.append(meta)
+                      print('CONTROL',i,json.dumps(meta,ensure_ascii=False), flush=True)
+                  except Exception as ex:
+                      print('CONTROL_ERR',i,repr(ex), flush=True)
+              Path('probe/bl-controls.json').write_text(json.dumps(metas,indent=2,ensure_ascii=False), encoding='utf-8')
 
-          def aes_cbc_encrypt(data,key):
-              padlen=16-(len(data)%16)
-              data=data+bytes([padlen])*padlen
-              return AES.new(key,AES.MODE_CBC,key[:16]).encrypt(data)
+              # Prefer a visible "Download on Browser" control inside the BL row.
+              candidates=[]
+              for sel in [
+                  'text=Download on Browser',
+                  'a:has-text("Download on Browser")',
+                  'button:has-text("Download on Browser")',
+                  '[title*="Browser" i]',
+              ]:
+                  loc=row.locator(sel)
+                  if loc.count():
+                      for i in range(loc.count()):
+                          candidates.append(loc.nth(i))
 
-          def decrypt_nonce(enc):
-              raw=base64.b64decode(enc)
-              dec=custom_unpad(aes_cbc_decrypt(raw,KEY1.encode()))
-              return dec.decode()
+              print('BROWSER_DOWNLOAD_CANDIDATES=',len(candidates), flush=True)
+              downloaded=False
+              for idx,c in enumerate(candidates):
+                  try:
+                      if not c.is_visible():
+                          continue
+                      print('TRY_CANDIDATE=',idx, c.evaluate('(e)=>e.outerHTML')[:1200], flush=True)
+                      try:
+                          with page.expect_download(timeout=20000) as di:
+                              c.click(timeout=10000)
+                          dl=di.value
+                          suggested=dl.suggested_filename
+                          dst=outdir/suggested
+                          dl.save_as(dst)
+                          print('DOWNLOAD_OK=',dst, dst.stat().st_size, flush=True)
+                          downloaded=True
+                          break
+                      except PlaywrightTimeoutError:
+                          print('NO_DIRECT_DOWNLOAD_EVENT candidate',idx,'url_now=',page.url, flush=True)
+                          page.wait_for_timeout(2500)
+                  except Exception as ex:
+                      print('CANDIDATE_ERR',idx,repr(ex), flush=True)
 
-          def get_auth(nonce):
-              keydata=[ord(c)%16 for c in nonce]
-              if len(keydata)<16:
-                  raise RuntimeError('decrypted nonce too short')
-              fkey=''.join(KEY1[keydata[i] % len(KEY1)] for i in range(16))+KEY2
-              return base64.b64encode(aes_cbc_encrypt(nonce.encode(),fkey.encode())).decode()
+              if not downloaded:
+                  # Look for a newly exposed direct href after click(s).
+                  links=row.locator('a[href]')
+                  direct=[]
+                  for i in range(links.count()):
+                      a=links.nth(i)
+                      href=a.get_attribute('href') or ''
+                      txt=(a.inner_text() or '').strip()
+                      if href.startswith('http') and any(k in (txt+' '+href).lower() for k in ['download','browser','samfw','file']):
+                          direct.append((txt,href))
+                  print('DIRECT_LINKS=',json.dumps(direct,ensure_ascii=False), flush=True)
+                  Path('probe/network-urls.txt').write_text('\n'.join(f'{s} {u}' for s,u in responses),encoding='utf-8')
+                  if direct:
+                      href=direct[0][1]
+                      print('TRY_DIRECT=',href, flush=True)
+                      rr=ctx.request.get(href, timeout=60000)
+                      print('DIRECT_HTTP=',rr.status,'len=',len(rr.body()), flush=True)
+                      if rr.ok:
+                          dst=outdir/BL
+                          dst.write_bytes(rr.body())
+                          print('DOWNLOAD_OK=',dst,dst.stat().st_size, flush=True)
+                          downloaded=True
 
-          def logic_check(inp,nonce):
-              if len(inp)<16:
-                  return ''
-              return ''.join(inp[ord(c)&0xf] for c in nonce)
-
-          def data_node(name,val):
-              return f'<{name}><Data>{val}</Data></{name}>'
-
-          def parse_data(root,tag,required=True):
-              el=root.find(f'./FUSBody/Put/{tag}/Data')
-              val=(el.text or '').strip() if el is not None else ''
-              if required and not val:
-                  raise RuntimeError('missing '+tag)
-              return val
-
-          s=requests.Session()
-          common={'User-Agent':'Kiss2.0_FUS','Accept':'application/xml'}
-
-          # Generate nonce exactly as current Bifrost FusClient does.
-          h=dict(common)
-          h['Authorization']='FUS nonce="", signature="", nc="", type="", realm="", newauth="1"'
-          nr=s.post(BASE+'/NF_DownloadGenerateNonce.do',headers=h,data=b'',timeout=30)
-          print('NONCE_HTTP=',nr.status_code)
-          nr.raise_for_status()
-          enc_nonce=nr.headers.get('NONCE') or nr.headers.get('nonce')
-          if not enc_nonce:
-              raise RuntimeError('missing NONCE header')
-          nonce=decrypt_nonce(enc_nonce)
-          auth=get_auth(nonce)
-          print('NONCE_DECRYPT_OK=1 len=',len(nonce))
-
-          xml=(
-              '<FUSMsg><FUSHdr><ProtoVer>1.0</ProtoVer><SessionID>0</SessionID><MsgID>1</MsgID></FUSHdr><FUSBody><Put>'
-              +data_node('ACCESS_MODE','2')
-              +data_node('BINARY_NATURE','1')
-              +data_node('CLIENT_PRODUCT','Smart Switch')
-              +data_node('CLIENT_VERSION','4.3.23123_1')
-              +data_node('DEVICE_IMEI_PUSH',imei)
-              +data_node('DEVICE_FW_VERSION',FW)
-              +data_node('DEVICE_LOCAL_CODE',REGION)
-              +data_node('DEVICE_AID_CODE',REGION)
-              +data_node('DEVICE_MODEL_NAME',MODEL)
-              +data_node('LOGIC_CHECK',logic_check(FW,nonce))
-              +data_node('DEVICE_CONTENTS_DATA_VERSION',DATA)
-              +data_node('DEVICE_CSC_CODE2_VERSION',CSC)
-              +data_node('DEVICE_PDA_CODE1_VERSION',PDA)
-              +data_node('DEVICE_PHONE_FONT_VERSION',PHONE)
-              +'<CLIENT_LANGUAGE><Type>String</Type><Type>ISO 3166-1-alpha-3</Type><Data>1033</Data></CLIENT_LANGUAGE>'
-              +'</Put><Get><CmdID>2</CmdID><LATEST_FW_VERSION/></Get></FUSBody></FUSMsg>'
-          )
-
-          # Current Bifrost passes includeNonce=false for BinaryInform.
-          h=dict(common)
-          h['Content-Type']='application/xml'
-          h['Authorization']=f'FUS nonce="", signature="{auth}", nc="", type="", realm="", newauth="1"'
-          ir=s.post(BASE+'/NF_DownloadBinaryInform.do',headers=h,data=xml.encode(),timeout=30)
-          print('INFORM_HTTP=',ir.status_code)
-          print('INFORM_HEAD=',repr(ir.text[:500]))
-          ir.raise_for_status()
-          root=ET.fromstring(ir.text)
-          status=(root.findtext('./FUSBody/Results/Status') or '').strip()
-          print('INFORM_STATUS=',status)
-          if status!='200':
-              raise RuntimeError('BinaryInform status '+status)
-
-          binary=parse_data(root,'BINARY_NAME')
-          model_path=parse_data(root,'MODEL_PATH')
-          size=parse_data(root,'BINARY_BYTE_SIZE')
-          logic_factory=parse_data(root,'LOGIC_VALUE_FACTORY',False) or parse_data(root,'LOGIC_VALUE_HOME')
-          latest_el=root.find('./FUSBody/Results/LATEST_FW_VERSION/Data')
-          latest=(latest_el.text or '').strip() if latest_el is not None else FW
-          print('BINARY_NAME=',binary)
-          print('MODEL_PATH=',model_path)
-          print('BINARY_SIZE=',size)
-          print('LATEST_FW_VERSION=',latest)
-
-          dec_key_str=logic_check(latest,logic_factory)
-          dec_key=hashlib.md5(dec_key_str.encode()).digest()
-          print('ENC4_KEY_DERIVED=1')
-
-          # Rotate auth from BinaryInform response, like FusClient.makeReq.
-          new_enc=ir.headers.get('NONCE') or ir.headers.get('nonce')
-          if new_enc:
-              enc_nonce=new_enc
-              nonce=decrypt_nonce(enc_nonce)
-              auth=get_auth(nonce)
-              print('INFORM_NONCE_ROTATED=1')
-
-          base=binary.split('.')[0]
-          start=len(base)-(16%len(base))
-          special=base[start:]
-          init_logic=logic_check(special,nonce)
-          initxml=(
-              '<FUSMsg><FUSHdr><ProtoVer>1.0</ProtoVer></FUSHdr><FUSBody><Put>'
-              +data_node('BINARY_FILE_NAME',binary)
-              +data_node('LOGIC_CHECK',init_logic)
-              +'</Put></FUSBody></FUSMsg>'
-          )
-          h=dict(common)
-          h['Content-Type']='application/xml'
-          h['Authorization']=f'FUS nonce="{enc_nonce}", signature="{auth}", nc="", type="", realm="", newauth="1"'
-          br=s.post(BASE+'/NF_DownloadBinaryInitForMass.do',headers=h,data=initxml.encode(),timeout=30)
-          print('INIT_HTTP=',br.status_code)
-          print('INIT_HEAD=',repr(br.text[:400]))
-          br.raise_for_status()
-
-          new_enc=br.headers.get('NONCE') or br.headers.get('nonce')
-          if new_enc:
-              enc_nonce=new_enc
-              nonce=decrypt_nonce(enc_nonce)
-              auth=get_auth(nonce)
-              print('INIT_NONCE_ROTATED=1')
-
-          dh={
-              'User-Agent':'Kies2.0_FUS',
-              'Authorization':f'FUS nonce="{enc_nonce}", signature="{auth}", nc="", type="", realm="", newauth="1"',
-              'Range':'bytes=0-31',
-              'Accept-Encoding':'identity',
-          }
-          dr=s.get(CLOUD,params={'file':model_path+binary},headers=dh,timeout=60)
-          print('RANGE_HTTP=',dr.status_code)
-          print('CONTENT_RANGE=',dr.headers.get('Content-Range'))
-          print('RANGE_LEN=',len(dr.content))
-          dr.raise_for_status()
-          if len(dr.content)<16:
-              raise RuntimeError('short encrypted range')
-
-          dec=AES.new(dec_key,AES.MODE_ECB).decrypt(dr.content[:16])
-          print('DEC_MAGIC=',repr(dec[:4]))
-          if not dec.startswith(b'PK\x03\x04'):
-              raise RuntimeError('decrypted range is not ZIP')
-          print('OFFICIAL_JZH3_FUS_OK=1')
+              Path('probe/network-urls.txt').write_text('\n'.join(f'{s} {u}' for s,u in responses),encoding='utf-8')
+              browser.close()
+              if not downloaded:
+                  raise SystemExit(30)
           PY
 
-      - name: Upload Bifrost probe
+          ls -lh downloads probe
+          test -f downloads/*.zip
+          ZIP="$(find downloads -maxdepth 1 -type f -name '*.zip' | head -n 1)"
+          echo "BL_ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Extract APNHLOS and inspect SKeymaster
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p blzip bltar apnhlos_fs result
+          unzip -l "$BL_ZIP" | tee probe/bl-zip-list.txt
+          unzip -j "$BL_ZIP" -d blzip
+          TAR="$(find blzip -maxdepth 1 -type f \( -name 'BL_*.tar.md5' -o -name '*.tar.md5' \) | head -n 1)"
+          test -n "$TAR"
+          tar -tf "$TAR" | tee probe/bl-tar-list.txt
+
+          MEMBER="$(tar -tf "$TAR" | grep -Ei '(^|/)(apnhlos|non-hlos)([^/]*)?(\.img)?(\.lz4)?$' | head -n 1 || true)"
+          if [ -z "$MEMBER" ]; then
+            echo 'No exact APNHLOS name; candidate firmware members:'
+            grep -Eai 'apnhlos|non-hlos|firmware|modem' probe/bl-tar-list.txt | head -n 300 || true
+            exit 40
+          fi
+          echo "APNHLOS_MEMBER=$MEMBER" | tee probe/apnhlos-member.txt
+          tar -xf "$TAR" -C bltar "$MEMBER"
+          RAW="bltar/$MEMBER"
+          if [[ "$RAW" == *.lz4 ]]; then
+            OUT="${RAW%.lz4}"
+            lz4 -d "$RAW" "$OUT"
+            RAW="$OUT"
+          fi
+          file "$RAW" | tee probe/apnhlos-file.txt
+          stat -c 'size=%s' "$RAW" | tee probe/apnhlos-size.txt
+          sha256sum "$RAW" | tee probe/apnhlos-sha256.txt
+
+          7z l "$RAW" | tee probe/apnhlos-7z-list.txt
+          7z x -y "$RAW" -oapnhlos_fs > probe/apnhlos-extract.txt
+          find apnhlos_fs -type f | sort > probe/apnhlos-files.txt
+          {
+            echo '=== STOCK JZH3 KEYMASTER FILES ==='
+            grep -Ei '/(skeymast|keymaste|keym|skm|crypt|asym)' probe/apnhlos-files.txt || true
+          } | tee probe/keymaster-files.txt
+
+          find apnhlos_fs -type f -iname 'skeymast*' -print -exec cp -v {} result/ \;
+          COUNT="$(find result -maxdepth 1 -type f -name 'skeymast*' | wc -l)"
+          echo "SKEYMAST_COUNT=$COUNT" | tee probe/skeymast-result.txt
+          if [ "$COUNT" -gt 0 ]; then
+            sha256sum result/skeymast* | tee probe/skeymast-sha256.txt
+          fi
+
+      - name: Upload probe artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: F711B-JZH3-Bifrost-FUS-probe
-          path: fus-bifrost-probe.txt
-          if-no-files-found: error
+          name: F711B-JZH3-browser-APNHLOS-probe
+          path: |
+            probe/
+            result/
+          if-no-files-found: warn
           retention-days: 7
