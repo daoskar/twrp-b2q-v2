@@ -1,13 +1,13 @@
-name: Build TWRP b2q APNHLOS identity test6aq
+name: Build TWRP b2q SKM alias test6ar
 
 on:
   push:
     branches:
-      - test6aq-apnhlos-id
+      - test6ar-skm-alias
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6aq-${{ github.ref }}
+  group: twrp-b2q-test6ar-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -703,19 +703,17 @@ jobs:
           \t\t}
           \t\tgui_print("[b2q] STRONGBOX HAL READY\\n");
 
-          \t\t// test6ak: the Samsung QSEE helper does not use the SPU keymp.sig
-          \t\t// name here. libkeymaster_helper.so points at
-          \t\t// /vendor/firmware_mnt/image/ and opens the QSEE app "skeymast".
-          \t\t// Keep apnhlos in place for SPU. Only if skeymast is absent there
-          \t\t// but present in the already-mounted modem tree, bind modem/image
-          \t\t// over the image directory immediately before starting Keymaster.
-          \t\tgui_print("[b2q] SKEYMAST TA CHECK\\n");
+          \t\t// test6ar: if this APNHLOS has Samsung's shorter "skm" trustlet
+          \t\t// but not the legacy "skeymast" filename expected by libskeymaster4device,
+          \t\t// build a temporary recovery-only firmware view. Preserve every original
+          \t\t// firmware file via /tmp/b2q-fwbase and add skm.* -> skeymast.* aliases.
+          \t\tgui_print("[b2q] SKEYMAST / SKM TA CHECK\\n");
           \t\tstd::string qsee_fw_diag;
           \t\tint qsee_fw_rc = TWFunc::Exec_Cmd(
           \t\t\t"echo helper_path=/vendor/firmware_mnt/image/; echo helper_app=skeymast; "
-          \t\t\t"echo fstab_suffix=$(getprop ro.boot.fstab_suffix); "
-          \t\t\t"echo '--- firmware mounts ---'; grep -E 'firmware_mnt|firmware-modem' /proc/mounts || true; "
+          \t\t\t"echo '--- firmware mounts ---'; grep -E 'firmware_mnt|firmware-modem|b2q-fw' /proc/mounts || true; "
           \t\t\t"echo '--- current skeymast TA ---'; ls -l /vendor/firmware_mnt/image/skeymast* 2>&1 || true; "
+          \t\t\t"echo '--- current skm TA ---'; ls -l /vendor/firmware_mnt/image/skm.* 2>&1 || true; "
           \t\t\t"echo '--- modem skeymast TA ---'; ls -l /vendor/firmware-modem/image/skeymast* 2>&1 || true; "
           \t\t\t"if ls /vendor/firmware_mnt/image/skeymast* >/dev/null 2>&1; then "
           \t\t\t"  echo QSEE_TA_SOURCE=current-apnhlos; exit 0; "
@@ -727,16 +725,30 @@ jobs:
           \t\t\t"  ls -l /vendor/firmware_mnt/image/skeymast* 2>&1; "
           \t\t\t"  exit 0; "
           \t\t\t"fi; "
-          \t\t\t"echo QSEE_TA_SOURCE=missing; "
-          \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 -iname 'skeymast*' -o -iname 'keymaste*' 2>/dev/null | head -n 120; "
+          \t\t\t"if [ -f /vendor/firmware_mnt/image/skm.mdt ]; then "
+          \t\t\t"  echo '[b2q] SKM ALIAS CANDIDATE'; echo QSEE_TA_SOURCE=skm-alias-candidate; "
+          \t\t\t"  umount /tmp/b2q-fwbase 2>/dev/null || true; "
+          \t\t\t"  rm -rf /tmp/b2q-fwbase /tmp/b2q-fwimage; mkdir -p /tmp/b2q-fwbase /tmp/b2q-fwimage; "
+          \t\t\t"  mount -o bind /vendor/firmware_mnt/image /tmp/b2q-fwbase || exit 64; "
+          \t\t\t"  for f in /tmp/b2q-fwbase/*; do [ -e \\\"$f\\\" ] || continue; ln -s \\\"$f\\\" \\\"/tmp/b2q-fwimage/$(basename \\\"$f\\\")\\\" || exit 65; done; "
+          \t\t\t"  for f in /tmp/b2q-fwbase/skm.*; do [ -e \\\"$f\\\" ] || continue; bn=$(basename \\\"$f\\\"); suf=\\${bn#skm}; ln -sf \\\"$f\\\" \\\"/tmp/b2q-fwimage/skeymast$suf\\\" || exit 65; done; "
+          \t\t\t"  [ -e /tmp/b2q-fwimage/skeymast.mdt ] || exit 65; "
+          \t\t\t"  mount -o bind /tmp/b2q-fwimage /vendor/firmware_mnt/image || exit 66; "
+          \t\t\t"  echo QSEE_TA_SOURCE=skm-alias; "
+          \t\t\t"  echo '--- aliased skeymast TA ---'; ls -l /vendor/firmware_mnt/image/skeymast.* 2>&1 || true; "
+          \t\t\t"  echo '--- backing skm TA ---'; ls -l /tmp/b2q-fwbase/skm.* 2>&1 || true; "
+          \t\t\t"  exit 0; "
+          \t\t\t"fi; "
+          \t\t\t"echo QSEE_TA_SOURCE=missing-skeymast-and-skm; "
+          \t\t\t"find /vendor/firmware_mnt /vendor/firmware-modem /vendor/firmware -maxdepth 3 \\( -iname 'skeymast*' -o -iname 'skm.*' -o -iname 'keymaste*' \\) 2>/dev/null | head -n 160; "
           \t\t\t"exit 63",
           \t\t\tqsee_fw_diag, true);
-          \t\tLOGINFO("b2q: Samsung QSEE skeymast diagnostics:\\n%s\\n", qsee_fw_diag.c_str());
+          \t\tLOGINFO("b2q: Samsung QSEE skeymast/SKM diagnostics:\\n%s\\n", qsee_fw_diag.c_str());
           \t\tgui_print("%s\\n", qsee_fw_diag.c_str());
           \t\tif (qsee_fw_rc != 0) {
-          \t\t\tgui_print("[b2q] SKEYMAST TA unavailable rc=%d - CONTINUE SPU PATH\\n", qsee_fw_rc);
+          \t\t\tgui_print("[b2q] SKEYMAST/SKM TA unavailable rc=%d - CONTINUE SPU PATH\\n", qsee_fw_rc);
           \t\t} else {
-          \t\t\tgui_print("[b2q] SKEYMAST TA READY\\n");
+          \t\t\tgui_print("[b2q] SKEYMAST/SKM TA READY\\n");
           \t\t}
 
           \t\tstd::string spu_handoff_pre;
@@ -986,6 +998,10 @@ jobs:
           grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER PRECHECK' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER BINARY READY' gui/action.cpp
+          grep -Fq 'SKM ALIAS CANDIDATE' gui/action.cpp
+          grep -Fq 'QSEE_TA_SOURCE=skm-alias' gui/action.cpp
+          grep -Fq 'mount -o bind /tmp/b2q-fwimage /vendor/firmware_mnt/image' gui/action.cpp
+          grep -Fq 'missing-skeymast-and-skm' gui/action.cpp
           grep -Fq 'B2Q FIRMWARE ID' gui/action.cpp
           grep -Fq 'SKEYMAST LOOKUP' gui/action.cpp
           grep -Fq 'apnhlos identity' gui/action.cpp
@@ -1070,7 +1086,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6aq APNHLOS identity + stock Keymaster flow verified'
+          echo '[b2q] test6ar SKM alias + stock Keymaster flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1110,28 +1126,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6aq package
+      - name: Build Odin test6ar package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6aq-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6ar-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6aq artifact
+      - name: Upload test6ar artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-apnhlos-id-test6aq-${{ github.sha }}
+          name: TWRP-b2q-skm-alias-test6ar-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6aq-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6aq-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6ar-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6ar-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
