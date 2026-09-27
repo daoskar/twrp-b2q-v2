@@ -16,222 +16,89 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
-      - name: Install browser + archive tools
+      - name: Probe S-Update JZH3 download endpoint
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends p7zip-full unzip lz4 file
-          python3 -m pip install --user playwright
-          python3 -m playwright install --with-deps chromium
+          mkdir -p probe scripts
+          URL='https://s-update.samsungvn.com/devices/SM-F711B'
+          curl -fL --retry 3 -A 'Mozilla/5.0' "$URL" -o probe/supdate.html
+          echo "page_size=$(stat -c %s probe/supdate.html)" | tee probe/summary.txt
 
-      - name: Download JZH3 BL in real browser
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p probe downloads
-          python3 - <<'PY' | tee probe/browser-probe.txt
-          import json, os, re, sys, time
+          python3 - <<'PY' | tee -a probe/summary.txt
           from pathlib import Path
-          from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-
-          PAGE='https://samfw.com/firmware/SM-F711B/PLS/F711BXXSJJZH3'
-          BL='BL_F711BXXSJJZH3_F711BXXSJJZH3_MQB113546584_REV00_user_low_ship_MULTI_CERT.tar.md5.zip'
-          outdir=Path('downloads')
-          outdir.mkdir(exist_ok=True)
-
-          with sync_playwright() as p:
-              browser=p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
-              ctx=browser.new_context(
-                  accept_downloads=True,
-                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-                  viewport={'width':1440,'height':1000},
-                  locale='en-US',
-              )
-              page=ctx.new_page()
-              responses=[]
-              def on_response(resp):
-                  u=resp.url
-                  if any(k in u.lower() for k in ['download','firmware','samfw','drive','file']):
-                      responses.append((resp.status,u))
-              page.on('response', on_response)
-
-              print('OPEN', PAGE, flush=True)
-              r=page.goto(PAGE, wait_until='domcontentloaded', timeout=60000)
-              print('PAGE_HTTP=', r.status if r else None, flush=True)
-              page.wait_for_timeout(5000)
-              print('TITLE=', page.title(), flush=True)
-              print('URL=', page.url, flush=True)
-              html=page.content()
-              Path('probe/page.html').write_text(html, encoding='utf-8')
-              page.screenshot(path='probe/page.png', full_page=False)
-
-              if BL not in html:
-                  print('BL_FILENAME_NOT_IN_DOM=1', flush=True)
-                  print('BODY_HEAD=', page.locator('body').inner_text()[:4000], flush=True)
-                  browser.close()
-                  raise SystemExit(20)
-
-              needle=page.get_by_text(BL, exact=True)
-              print('BL_TEXT_COUNT=', needle.count(), flush=True)
-              if needle.count()==0:
-                  raise SystemExit(21)
-              el=needle.first
-              el.scroll_into_view_if_needed()
-              page.wait_for_timeout(500)
-
-              # Climb to a useful row/container around the BL filename.
-              row=el.locator('xpath=ancestor::tr[1]')
-              if row.count()==0:
-                  row=el.locator('xpath=ancestor::*[contains(@class,"row")][1]')
-              if row.count()==0:
-                  row=el.locator('xpath=..')
-              row_html=row.evaluate('(e)=>e.outerHTML')
-              Path('probe/bl-row.html').write_text(row_html, encoding='utf-8')
-              print('ROW_TEXT=', row.inner_text()[:3000], flush=True)
-
-              controls=row.locator('a,button,[onclick],[data-url],[data-href],[data-link]')
-              print('CONTROL_COUNT=', controls.count(), flush=True)
-              metas=[]
-              for i in range(controls.count()):
-                  c=controls.nth(i)
-                  try:
-                      meta=c.evaluate('''e => ({
-                        tag:e.tagName, text:(e.innerText||e.textContent||'').trim(),
-                        href:e.href||e.getAttribute('href'),
-                        onclick:e.getAttribute('onclick'),
-                        id:e.id||null, cls:e.className||null,
-                        dataset:Object.fromEntries(Object.entries(e.dataset||{}))
-                      })''')
-                      metas.append(meta)
-                      print('CONTROL',i,json.dumps(meta,ensure_ascii=False), flush=True)
-                  except Exception as ex:
-                      print('CONTROL_ERR',i,repr(ex), flush=True)
-              Path('probe/bl-controls.json').write_text(json.dumps(metas,indent=2,ensure_ascii=False), encoding='utf-8')
-
-              # Prefer a visible "Download on Browser" control inside the BL row.
-              candidates=[]
-              for sel in [
-                  'text=Download on Browser',
-                  'a:has-text("Download on Browser")',
-                  'button:has-text("Download on Browser")',
-                  '[title*="Browser" i]',
-              ]:
-                  loc=row.locator(sel)
-                  if loc.count():
-                      for i in range(loc.count()):
-                          candidates.append(loc.nth(i))
-
-              print('BROWSER_DOWNLOAD_CANDIDATES=',len(candidates), flush=True)
-              downloaded=False
-              for idx,c in enumerate(candidates):
-                  try:
-                      if not c.is_visible():
-                          continue
-                      print('TRY_CANDIDATE=',idx, c.evaluate('(e)=>e.outerHTML')[:1200], flush=True)
-                      try:
-                          with page.expect_download(timeout=20000) as di:
-                              c.click(timeout=10000)
-                          dl=di.value
-                          suggested=dl.suggested_filename
-                          dst=outdir/suggested
-                          dl.save_as(dst)
-                          print('DOWNLOAD_OK=',dst, dst.stat().st_size, flush=True)
-                          downloaded=True
-                          break
-                      except PlaywrightTimeoutError:
-                          print('NO_DIRECT_DOWNLOAD_EVENT candidate',idx,'url_now=',page.url, flush=True)
-                          page.wait_for_timeout(2500)
-                  except Exception as ex:
-                      print('CANDIDATE_ERR',idx,repr(ex), flush=True)
-
-              if not downloaded:
-                  # Look for a newly exposed direct href after click(s).
-                  links=row.locator('a[href]')
-                  direct=[]
-                  for i in range(links.count()):
-                      a=links.nth(i)
-                      href=a.get_attribute('href') or ''
-                      txt=(a.inner_text() or '').strip()
-                      if href.startswith('http') and any(k in (txt+' '+href).lower() for k in ['download','browser','samfw','file']):
-                          direct.append((txt,href))
-                  print('DIRECT_LINKS=',json.dumps(direct,ensure_ascii=False), flush=True)
-                  Path('probe/network-urls.txt').write_text('\n'.join(f'{s} {u}' for s,u in responses),encoding='utf-8')
-                  if direct:
-                      href=direct[0][1]
-                      print('TRY_DIRECT=',href, flush=True)
-                      rr=ctx.request.get(href, timeout=60000)
-                      print('DIRECT_HTTP=',rr.status,'len=',len(rr.body()), flush=True)
-                      if rr.ok:
-                          dst=outdir/BL
-                          dst.write_bytes(rr.body())
-                          print('DOWNLOAD_OK=',dst,dst.stat().st_size, flush=True)
-                          downloaded=True
-
-              Path('probe/network-urls.txt').write_text('\n'.join(f'{s} {u}' for s,u in responses),encoding='utf-8')
-              browser.close()
-              if not downloaded:
-                  raise SystemExit(30)
+          import re, html as h
+          s=Path('probe/supdate.html').read_text(errors='ignore')
+          needle='F711BXXSJJZH3'
+          poss=[m.start() for m in re.finditer(needle,s)]
+          print('JZH3_OCCURRENCES=',len(poss))
+          for n,i in enumerate(poss[:8]):
+              chunk=s[max(0,i-5000):i+9000]
+              Path(f'probe/jzh3-context-{n}.html').write_text(chunk)
+              print(f'--- CONTEXT {n} OFFSET {i} ---')
+              # Print compact lines around links/forms/buttons/data attrs.
+              for line in chunk.splitlines():
+                  low=line.lower()
+                  if any(k in low for k in ['href=','action=','onclick=','download','data-','form','button','f711bxxsjjzh3']):
+                      print(h.unescape(line.strip())[:3000])
           PY
 
-          ls -lh downloads probe
-          test -f downloads/*.zip
-          ZIP="$(find downloads -maxdepth 1 -type f -name '*.zip' | head -n 1)"
-          echo "BL_ZIP=$ZIP" >> "$GITHUB_ENV"
+          echo '--- all interesting URLs ---' | tee -a probe/summary.txt
+          python3 - <<'PY' | tee -a probe/summary.txt
+          from pathlib import Path
+          import re, html
+          s=html.unescape(Path('probe/supdate.html').read_text(errors='ignore'))
+          urls=set()
+          for pat in [
+              r'https?://[^"\'<> ]+',
+              r'href=["\']([^"\']+)["\']',
+              r'action=["\']([^"\']+)["\']',
+              r'(?:url|link|downloadUrl|download_url)\s*[:=]\s*["\']([^"\']+)["\']',
+          ]:
+              for m in re.finditer(pat,s,re.I):
+                  u=m.group(1) if m.lastindex else m.group(0)
+                  if any(k in u.lower() for k in ['download','firmware','update','f711','samsung','api']):
+                      urls.add(u)
+          for u in sorted(urls):
+              print(u)
+          PY
 
-      - name: Extract APNHLOS and inspect SKeymaster
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p blzip bltar apnhlos_fs result
-          unzip -l "$BL_ZIP" | tee probe/bl-zip-list.txt
-          unzip -j "$BL_ZIP" -d blzip
-          TAR="$(find blzip -maxdepth 1 -type f \( -name 'BL_*.tar.md5' -o -name '*.tar.md5' \) | head -n 1)"
-          test -n "$TAR"
-          tar -tf "$TAR" | tee probe/bl-tar-list.txt
+          echo '--- script src list ---' | tee -a probe/summary.txt
+          python3 - <<'PY' | tee probe/script-src.txt
+          from pathlib import Path
+          import re, html
+          s=html.unescape(Path('probe/supdate.html').read_text(errors='ignore'))
+          for m in re.finditer(r'<script[^>]+src=["\']([^"\']+)["\']',s,re.I):
+              print(m.group(1))
+          PY
 
-          MEMBER="$(tar -tf "$TAR" | grep -Ei '(^|/)(apnhlos|non-hlos)([^/]*)?(\.img)?(\.lz4)?$' | head -n 1 || true)"
-          if [ -z "$MEMBER" ]; then
-            echo 'No exact APNHLOS name; candidate firmware members:'
-            grep -Eai 'apnhlos|non-hlos|firmware|modem' probe/bl-tar-list.txt | head -n 300 || true
-            exit 40
-          fi
-          echo "APNHLOS_MEMBER=$MEMBER" | tee probe/apnhlos-member.txt
-          tar -xf "$TAR" -C bltar "$MEMBER"
-          RAW="bltar/$MEMBER"
-          if [[ "$RAW" == *.lz4 ]]; then
-            OUT="${RAW%.lz4}"
-            lz4 -d "$RAW" "$OUT"
-            RAW="$OUT"
-          fi
-          file "$RAW" | tee probe/apnhlos-file.txt
-          stat -c 'size=%s' "$RAW" | tee probe/apnhlos-size.txt
-          sha256sum "$RAW" | tee probe/apnhlos-sha256.txt
+          while IFS= read -r src; do
+            [ -n "$src" ] || continue
+            case "$src" in
+              //*) full="https:$src" ;;
+              /*) full="https://s-update.samsungvn.com$src" ;;
+              http*) full="$src" ;;
+              *) full="https://s-update.samsungvn.com/$src" ;;
+            esac
+            fn="$(printf '%s' "$src" | tr '/?&=:.' '_' | cut -c1-160)"
+            curl -fsSL --retry 2 -A 'Mozilla/5.0' "$full" -o "scripts/$fn" || true
+          done < probe/script-src.txt
 
-          7z l "$RAW" | tee probe/apnhlos-7z-list.txt
-          7z x -y "$RAW" -oapnhlos_fs > probe/apnhlos-extract.txt
-          find apnhlos_fs -type f | sort > probe/apnhlos-files.txt
-          {
-            echo '=== STOCK JZH3 KEYMASTER FILES ==='
-            grep -Ei '/(skeymast|keymaste|keym|skm|crypt|asym)' probe/apnhlos-files.txt || true
-          } | tee probe/keymaster-files.txt
+          echo '--- JS download/api references ---' | tee -a probe/summary.txt
+          grep -RniE 'download|firmware|fuddy|api/|ajax|fetch\(|axios|location\.href|window\.open|s-update' scripts             | head -n 600 | tee probe/js-download-refs.txt || true
 
-          find apnhlos_fs -type f -iname 'skeymast*' -print -exec cp -v {} result/ \;
-          COUNT="$(find result -maxdepth 1 -type f -name 'skeymast*' | wc -l)"
-          echo "SKEYMAST_COUNT=$COUNT" | tee probe/skeymast-result.txt
-          if [ "$COUNT" -gt 0 ]; then
-            sha256sum result/skeymast* | tee probe/skeymast-sha256.txt
-          fi
+          echo '--- forms/buttons globally ---' | tee -a probe/summary.txt
+          grep -niE '<form|<button|download|onclick=|data-url=|data-link=|data-id=' probe/supdate.html             | head -n 500 | tee probe/forms-buttons.txt || true
 
-      - name: Upload probe artifacts
+      - name: Upload S-Update endpoint probe
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: F711B-JZH3-browser-APNHLOS-probe
+          name: F711B-JZH3-SUpdate-endpoint-probe
           path: |
             probe/
-            result/
+            scripts/
           if-no-files-found: warn
           retention-days: 7
