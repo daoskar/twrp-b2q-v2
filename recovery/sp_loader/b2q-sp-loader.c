@@ -30,14 +30,15 @@ static int wait_app(spcom_is_app_loaded_fn is_loaded, const char *name, int time
 }
 
 int main(int argc, char **argv) {
-    if (argc < 3 || argc > 4) {
-        fprintf(stderr, "usage: %s <channel> <sig_path> [swap_size]\n", argv[0]);
+    bool status_only = (argc == 2 && strcmp(argv[1], "--status") == 0);
+    if (!status_only && (argc < 3 || argc > 4)) {
+        fprintf(stderr, "usage: %s --status | <channel> <sig_path> [swap_size]\n", argv[0]);
         return 64;
     }
 
-    const char *channel = argv[1];
-    const char *sig_path = argv[2];
-    int swap_size = (argc == 4) ? atoi(argv[3]) : (256 * 1024);
+    const char *channel = status_only ? NULL : argv[1];
+    const char *sig_path = status_only ? NULL : argv[2];
+    int swap_size = (!status_only && argc == 4) ? atoi(argv[3]) : (256 * 1024);
 
     void *h = dlopen("/vendor/lib64/libspcom.so", RTLD_NOW | RTLD_LOCAL);
     if (!h) {
@@ -59,6 +60,15 @@ int main(int argc, char **argv) {
                 (void *)is_loaded, (void *)is_link_up, (void *)wait_spu_ready, (void *)load_app);
         dlclose(h);
         return 66;
+    }
+
+    if (status_only) {
+        printf("[b2q-sp-loader] status link_up=%d\n", is_link_up() ? 1 : 0);
+        printf("[b2q-sp-loader] status asym_cryptoapp=%d\n", is_loaded("asym_cryptoapp") ? 1 : 0);
+        printf("[b2q-sp-loader] status cryptoapp=%d\n", is_loaded("cryptoapp") ? 1 : 0);
+        printf("[b2q-sp-loader] status sp_keymaster=%d\n", is_loaded("sp_keymaster") ? 1 : 0);
+        dlclose(h);
+        return 0;
     }
 
     printf("[b2q-sp-loader] channel=%s sig=%s swap=%d\n",
