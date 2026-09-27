@@ -16,62 +16,66 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
-      - name: Install current SamLoader Reloaded
+      - name: Install probe deps
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m pip install --user git+https://github.com/t0rzz/SamLoader-Reloaded.git
-          python3 -m samloader --help | head -n 80
+          python3 -m pip install --user pycryptodomex requests
 
-      - name: Probe official JZH3 FUS metadata and encrypted range
+      - name: Inspect current Samsung FUS nonce format
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY' | tee fus-probe.txt
+          python3 - <<'PY' | tee fus-nonce-probe.txt
+          import base64, requests
           from Cryptodome.Cipher import AES
-          from samloader import fusclient, main, crypt
 
-          MODEL='SM-F711B'
-          REGION='PLS'
-          FW='F711BXXSJJZH3/F711BOXMJJZH3/F711BXXSJJZH3/F711BXXSJJZH3'
+          URL='https://neofussvr.sslcs.cdngc.net/NF_DownloadGenerateNonce.do'
+          KEY_1=b'vicopx7dqu06emacgpnpy8j8zwhduwlh'
+          auth='FUS nonce="", signature="", nc="", type="", realm="", newauth="1"'
 
-          IMEI='356392271234560'  # synthetic SM-F711B TAC + Luhn, not a real device IMEI
-          print('SYNTHETIC_IMEI_TAC=', IMEI[:8])
-
-          client=fusclient.FUSClient()
-          path, filename, size=main.getbinaryfile(client, FW, MODEL, IMEI, REGION)
-          print('MODEL=', MODEL)
-          print('REGION=', REGION)
-          print('FW=', FW)
-          print('FUS_PATH=', path)
-          print('FUS_FILENAME=', filename)
-          print('FUS_SIZE=', size)
-
-          key=crypt.getv4key(FW, MODEL, REGION, IMEI)
-          if not key:
-              raise SystemExit('V4 key retrieval failed')
-          print('V4_KEY_OK=1')
-
-          main.initdownload(client, filename)
-          r=client.downloadfile(path+filename, 0, 31)
-          data=r.content
-          print('RANGE_STATUS=', r.status_code)
-          print('RANGE_LEN=', len(data))
-          print('CONTENT_RANGE=', r.headers.get('Content-Range'))
-          dec=AES.new(key, AES.MODE_ECB).decrypt(data[:16])
-          print('DEC_HEAD_HEX=', dec.hex())
-          print('DEC_HEAD_MAGIC=', repr(dec[:4]))
-          if not dec.startswith(b'PK\x03\x04'):
-              raise SystemExit('Decrypted firmware does not start with ZIP local header')
-          print('OFFICIAL_FUS_RANGE_OK=1')
+          for ua in ('Kies2.0_FUS','Kiss2.0_FUS'):
+              print('=== UA', ua, '===')
+              r=requests.post(URL, headers={'Authorization':auth,'User-Agent':ua}, timeout=15)
+              print('status=',r.status_code)
+              print('body_len=',len(r.content))
+              print('body_head=',repr(r.text[:300]))
+              enc=r.headers.get('NONCE') or r.headers.get('nonce')
+              print('nonce_header_present=',bool(enc))
+              if not enc:
+                  print('headers=',{k:v for k,v in r.headers.items() if k.lower() in ('nonce','set-cookie','content-type','server')})
+                  continue
+              print('enc_nonce_len=',len(enc))
+              print('enc_nonce=',enc)
+              try:
+                  raw=base64.b64decode(enc, validate=True)
+              except Exception as e:
+                  print('base64_error=',repr(e)); continue
+              print('cipher_len=',len(raw))
+              print('cipher_hex=',raw.hex())
+              if len(raw)%16:
+                  print('cipher_not_block_aligned=1'); continue
+              dec=AES.new(KEY_1,AES.MODE_CBC,KEY_1[:16]).decrypt(raw)
+              print('plain_padded_len=',len(dec))
+              print('plain_padded_hex=',dec.hex())
+              print('plain_padded_repr=',repr(dec))
+              pad=dec[-1] if dec else 0
+              print('pad_byte=',pad)
+              valid=bool(dec) and 1 <= pad <= 16 and dec[-pad:]==bytes([pad])*pad
+              print('pkcs7_valid=',int(valid))
+              unpadded=dec[:-pad] if valid else dec
+              print('plain_len=',len(unpadded))
+              print('plain_repr=',repr(unpadded))
+              try: print('plain_ascii=',unpadded.decode())
+              except Exception as e: print('plain_decode_error=',repr(e))
           PY
 
-      - name: Upload probe result
+      - name: Upload nonce probe
         uses: actions/upload-artifact@v4
         with:
-          name: F711B-JZH3-FUS-probe
-          path: fus-probe.txt
+          name: F711B-JZH3-FUS-nonce-probe
+          path: fus-nonce-probe.txt
           if-no-files-found: error
           retention-days: 7
