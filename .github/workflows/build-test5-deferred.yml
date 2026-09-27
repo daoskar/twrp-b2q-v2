@@ -1,13 +1,13 @@
-name: Build TWRP b2q APNHLOS identity test6aq
+name: Build TWRP b2q SKeymaster partition scan test6ar
 
 on:
   push:
     branches:
-      - test6aq-apnhlos-id
+      - test6ar-scan-skeymast-partitions
   workflow_dispatch:
 
 concurrency:
-  group: twrp-b2q-test6aq-${{ github.ref }}
+  group: twrp-b2q-test6ar-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
             -b twrp-12.1
           "$HOME/bin/repo" sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Checkout test6aq device tree
+      - name: Checkout test6ar device tree
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -703,6 +703,36 @@ jobs:
           \t\t}
           \t\tgui_print("[b2q] STRONGBOX HAL READY\\n");
 
+          \t\t// test6ar: before giving up on missing skeymast.mdt, scan
+          \t\t// all small by-name firmware partitions read-only for a matching
+          \t\t// Samsung QSEE TA. If found, bind only that candidate image dir
+          \t\t// over firmware_mnt/image after SPU + StrongBox are already ready.
+          \t\tgui_print("[b2q] SKEYMAST PARTITION SCAN START\\n");
+          \t\tstd::string skey_scan_diag;
+          \t\tint skey_scan_rc = TWFunc::Exec_Cmd(
+          \t\t\t"/system/bin/sh /system/bin/b2q-skeymast-scan.sh",
+          \t\t\tskey_scan_diag, true);
+          \t\tLOGINFO("b2q: SKeymaster partition scan rc=%d:\\n%s\\n", skey_scan_rc, skey_scan_diag.c_str());
+          \t\tgui_print("%s\\n", skey_scan_diag.c_str());
+
+          \t\tif (skey_scan_rc == 0 && TWFunc::Path_Exists("/tmp/b2q-skeymast-candidate-dir")) {
+          \t\t\tstd::string skey_bind_diag;
+          \t\t\tint skey_bind_rc = TWFunc::Exec_Cmd(
+          \t\t\t\t"CAND=$(cat /tmp/b2q-skeymast-candidate-dir 2>/dev/null); "
+          \t\t\t\t"echo candidate_dir=$CAND; "
+          \t\t\t\t"if [ \\"$CAND\\" = /vendor/firmware_mnt/image ]; then echo SKEYMAST_BIND=current; exit 0; fi; "
+          \t\t\t\t"if [ -z \\"$CAND\\" ] || [ ! -r \\"$CAND/skeymast.mdt\\" ]; then echo candidate_invalid; exit 71; fi; "
+          \t\t\t\t"mount -o bind \\"$CAND\\" /vendor/firmware_mnt/image || exit 72; "
+          \t\t\t\t"echo SKEYMAST_BIND=candidate; ls -l /vendor/firmware_mnt/image/skeymast* 2>&1",
+          \t\t\t\tskey_bind_diag, true);
+          \t\t\tLOGINFO("b2q: SKeymaster candidate bind rc=%d:\\n%s\\n", skey_bind_rc, skey_bind_diag.c_str());
+          \t\t\tgui_print("%s\\n", skey_bind_diag.c_str());
+          \t\t\tif (skey_bind_rc == 0)
+          \t\t\t\tgui_print("[b2q] SKEYMAST PARTITION CANDIDATE READY\\n");
+          \t\t} else {
+          \t\t\tgui_print("[b2q] SKEYMAST PARTITION SCAN: no candidate\\n");
+          \t\t}
+
           \t\t// test6ak: the Samsung QSEE helper does not use the SPU keymp.sig
           \t\t// name here. libkeymaster_helper.so points at
           \t\t// /vendor/firmware_mnt/image/ and opens the QSEE app "skeymast".
@@ -986,7 +1016,11 @@ jobs:
           grep -Fq 'tryGetService("strongbox", false)' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER PRECHECK' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER BINARY READY' gui/action.cpp
+          test -s recovery/root/system/bin/b2q-skeymast-scan.sh
+          grep -Fq 'SKEYMAST PARTITION SCAN' recovery/root/system/bin/b2q-skeymast-scan.sh
           grep -Fq 'B2Q FIRMWARE ID' gui/action.cpp
+          grep -Fq 'SKEYMAST PARTITION SCAN START' gui/action.cpp
+          grep -Fq 'SKEYMAST PARTITION CANDIDATE READY' gui/action.cpp
           grep -Fq 'SKEYMAST LOOKUP' gui/action.cpp
           grep -Fq 'apnhlos identity' gui/action.cpp
           grep -Fq 'STOCK B2Q KEYMASTER FIRST TRACE' gui/action.cpp
@@ -1070,7 +1104,7 @@ jobs:
             echo 'Synchronous startup Decrypt_Data() is still active' >&2
             exit 1
           fi
-          echo '[b2q] test6aq APNHLOS identity + stock Keymaster flow verified'
+          echo '[b2q] test6ar read-only SKeymaster partition scan + stock Keymaster flow verified'
 
       - name: Build recovery.img
         shell: bash
@@ -1110,28 +1144,28 @@ jobs:
             exit 1
           fi
 
-      - name: Build Odin test6aq package
+      - name: Build Odin test6ar package
         shell: bash
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/twrp/out/target/product/b2q"
           cd "$OUT"
-          BASE="TWRP-b2q-test6aq-${GITHUB_SHA::8}"
+          BASE="TWRP-b2q-test6ar-${GITHUB_SHA::8}"
           tar --format=ustar -cf "$BASE-Odin.tar" recovery.img
           cp "$BASE-Odin.tar" "$BASE-Odin.tar.md5"
           md5sum -t "$BASE-Odin.tar.md5" >> "$BASE-Odin.tar.md5"
           sha256sum recovery.img "$BASE-Odin.tar" "$BASE-Odin.tar.md5" > SHA256SUMS.txt
           tar -tf "$BASE-Odin.tar"
 
-      - name: Upload test6aq artifact
+      - name: Upload test6ar artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TWRP-b2q-apnhlos-id-test6aq-${{ github.sha }}
+          name: TWRP-b2q-skeymast-partition-scan-test6ar-${{ github.sha }}
           path: |
             twrp/out/target/product/b2q/recovery.img
             twrp/out/target/product/b2q/recovery.img.sha256
-            twrp/out/target/product/b2q/TWRP-b2q-test6aq-*-Odin.tar
-            twrp/out/target/product/b2q/TWRP-b2q-test6aq-*-Odin.tar.md5
+            twrp/out/target/product/b2q/TWRP-b2q-test6ar-*-Odin.tar
+            twrp/out/target/product/b2q/TWRP-b2q-test6ar-*-Odin.tar.md5
             twrp/out/target/product/b2q/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
